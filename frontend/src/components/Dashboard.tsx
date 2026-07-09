@@ -69,6 +69,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
   // Automation Log Drawer State
   const [logInvoice, setLogInvoice] = useState<Invoice | null>(null);
 
+  // Bulk Selection States
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [searchTerm, statusFilter]);
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const files = Array.from(e.target.files);
@@ -163,6 +170,75 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
     } catch (err: any) {
       console.error(err);
       const errMsg = err.response?.data?.error || 'Failed to start ERP sync.';
+      showToast(errMsg, 'error');
+    }
+  };
+
+  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      setSelectedIds(filteredInvoices.map(i => i.id));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  const handleSelectRow = (e: React.ChangeEvent<HTMLInputElement>, id: string) => {
+    if (e.target.checked) {
+      setSelectedIds(prev => [...prev, id]);
+    } else {
+      setSelectedIds(prev => prev.filter(i => i !== id));
+    }
+  };
+
+  const handleBulkVerify = async () => {
+    if (selectedIds.length === 0) return;
+    try {
+      showToast(`Verifying ${selectedIds.length} selected invoice(s)...`, 'info');
+      const res = await axios.post('/api/confirm', { ids: selectedIds });
+      showToast(res.data.message || `Successfully verified ${selectedIds.length} invoice(s)!`, 'success');
+      setSelectedIds([]);
+      fetchInvoices();
+    } catch (err: any) {
+      console.error(err);
+      const errMsg = err.response?.data?.error || 'Failed to verify selected invoices.';
+      showToast(errMsg, 'error');
+    }
+  };
+
+  const handleBulkSync = async () => {
+    if (selectedIds.length === 0) return;
+    const syncableInvoices = invoices.filter(i => selectedIds.includes(i.id) && (i.status === 'Verified' || i.status === 'Failed' || i.status === 'Rejected'));
+    if (syncableInvoices.length === 0) {
+      showToast('None of the selected invoices are in Verified or Failed/Rejected status to be synced.', 'error');
+      return;
+    }
+    const syncableIds = syncableInvoices.map(i => i.id);
+    try {
+      showToast(`Triggering ERP sync for ${syncableIds.length} invoice(s)...`, 'info');
+      const res = await axios.post('/api/automation/start', { invoiceIds: syncableIds, stopOnError, entryUrl });
+      showToast(res.data.message || 'ERP sync started successfully.', 'success');
+      setSelectedIds([]);
+      fetchInvoices();
+    } catch (err: any) {
+      console.error(err);
+      const errMsg = err.response?.data?.error || 'Failed to start ERP sync.';
+      showToast(errMsg, 'error');
+    }
+  };
+
+  const handleBulkReject = async () => {
+    if (selectedIds.length === 0) return;
+    const confirmReject = window.confirm(`Are you sure you want to reject the ${selectedIds.length} selected invoice(s)?`);
+    if (!confirmReject) return;
+    try {
+      showToast(`Rejecting ${selectedIds.length} selected invoice(s)...`, 'info');
+      const res = await axios.post('/api/reject', { ids: selectedIds });
+      showToast(res.data.message || `Successfully rejected ${selectedIds.length} invoice(s)!`, 'success');
+      setSelectedIds([]);
+      fetchInvoices();
+    } catch (err: any) {
+      console.error(err);
+      const errMsg = err.response?.data?.error || 'Failed to reject selected invoices.';
       showToast(errMsg, 'error');
     }
   };
@@ -617,6 +693,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-slate-200/50 dark:border-slate-800/50 text-slate-400 dark:text-slate-500 text-xs font-semibold tracking-wider uppercase bg-slate-100/20 dark:bg-slate-950/20">
+                  <th className="py-4 px-6 text-center w-12">
+                    <input
+                      type="checkbox"
+                      checked={filteredInvoices.length > 0 && selectedIds.length === filteredInvoices.length}
+                      onChange={handleSelectAll}
+                      className="w-4 h-4 rounded text-brand focus:ring-brand border-slate-300 dark:border-slate-850 dark:bg-slate-900 focus:outline-none cursor-pointer"
+                    />
+                  </th>
                   <th className="py-4 px-6">Supplier Name</th>
                   <th className="py-4 px-6">Bill Number</th>
                   <th className="py-4 px-6">PAN</th>
@@ -632,6 +716,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
                 {loading ? (
                   Array.from({ length: 4 }).map((_, idx) => (
                     <tr key={idx} className="animate-pulse">
+                      <td className="py-4 px-6 text-center"><div className="h-4 w-4 bg-slate-200 dark:bg-slate-800 rounded mx-auto"></div></td>
                       <td className="py-4 px-6"><div className="h-4 w-48 bg-slate-200 dark:bg-slate-800 rounded"></div></td>
                       <td className="py-4 px-6"><div className="h-4 w-16 bg-slate-200 dark:bg-slate-800 rounded"></div></td>
                       <td className="py-4 px-6"><div className="h-4 w-24 bg-slate-200 dark:bg-slate-800 rounded"></div></td>
@@ -645,7 +730,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
                   ))
                 ) : filteredInvoices.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="py-16 text-center">
+                    <td colSpan={10} className="py-16 text-center">
                       <div className="flex flex-col items-center justify-center gap-3">
                         <div className="p-4 rounded-full bg-slate-100 dark:bg-slate-900 text-slate-400">
                           <FileText className="w-8 h-8" />
@@ -663,11 +748,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
                       key={invoice.id}
                       onClick={() => onSelectInvoice(filteredInvoices.map(i => i.id), index)}
                       className={`group cursor-pointer hover:bg-slate-100/50 dark:hover:bg-slate-950/30 transition-colors ${
-                        invoice.non_taxable_amount !== undefined && invoice.non_taxable_amount > 0
-                          ? 'bg-cyan-500/[0.02] dark:bg-cyan-500/[0.01]'
-                          : ''
+                        selectedIds.includes(invoice.id)
+                          ? 'bg-brand/5 dark:bg-brand/10'
+                          : invoice.non_taxable_amount !== undefined && invoice.non_taxable_amount > 0
+                            ? 'bg-cyan-500/[0.02] dark:bg-cyan-500/[0.01]'
+                            : ''
                       }`}
                     >
+                      <td className="py-4 px-6 text-center" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(invoice.id)}
+                          onChange={(e) => handleSelectRow(e, invoice.id)}
+                          className="w-4 h-4 rounded text-brand focus:ring-brand border-slate-300 dark:border-slate-800 dark:bg-slate-900 focus:outline-none cursor-pointer"
+                        />
+                      </td>
                       <td className={`py-4 px-6 font-semibold text-slate-800 dark:text-slate-200 ${
                         invoice.non_taxable_amount !== undefined && invoice.non_taxable_amount > 0
                           ? 'border-l-4 border-cyan-500 dark:border-l-4 dark:border-cyan-400'
@@ -952,6 +1047,54 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
                 </button>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Action Bar for Bulk Selection */}
+      {selectedIds.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-900/95 dark:bg-slate-900/95 backdrop-blur-md text-white border border-slate-800 rounded-2xl px-6 py-4 flex flex-wrap items-center justify-between gap-6 shadow-2xl z-40 animate-in slide-in-from-bottom-8 duration-300 w-[90%] max-w-2xl">
+          <div className="flex items-center gap-3">
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand text-xs font-bold text-white">
+              {selectedIds.length}
+            </span>
+            <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400">Selected Invoices</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleBulkVerify}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all active:scale-95 border-0 cursor-pointer shadow-md"
+            >
+              <Check className="w-3.5 h-3.5" />
+              <span>Verify</span>
+            </button>
+
+            <button
+              onClick={handleBulkSync}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all active:scale-95 border-0 cursor-pointer shadow-md"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+              <span>Sync ERP</span>
+            </button>
+
+            <button
+              onClick={handleBulkReject}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all active:scale-95 border-0 cursor-pointer shadow-md"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>Reject</span>
+            </button>
+
+            <div className="w-px h-6 bg-slate-800 mx-1"></div>
+
+            <button
+              onClick={() => setSelectedIds([])}
+              className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-xl transition-all active:scale-95 border-0 cursor-pointer"
+              title="Clear selection"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         </div>
       )}

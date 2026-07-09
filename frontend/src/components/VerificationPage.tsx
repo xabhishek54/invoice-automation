@@ -970,7 +970,11 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                 <div>
                   <h4 className="font-extrabold uppercase tracking-wider text-[10px] text-cyan-700 dark:text-cyan-300">Non-Taxable Amount Detected</h4>
                   <p className="mt-0.5 font-semibold leading-relaxed">
-                    This invoice contains a non-taxable purchase entry of <strong>Rs. {Number(formData.non_taxable_amount).toLocaleString('en-NP', { minimumFractionDigits: 2 })}</strong>. The automation system will submit both Taxable and Non-Taxable entries sequentially.
+                    This invoice contains a non-taxable purchase entry of <strong>Rs. {Number(formData.non_taxable_amount).toLocaleString('en-NP', { minimumFractionDigits: 2 })}</strong>. {Number(formData.taxable_amount) > 0 ? (
+                      <span>The automation system will submit both Taxable and Non-Taxable entries sequentially.</span>
+                    ) : (
+                      <span>The automation system will only submit the Non-Taxable entry since the Taxable amount is 0.</span>
+                    )}
                   </p>
                 </div>
               </div>

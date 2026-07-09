@@ -20,8 +20,11 @@ export async function processInvoice(
 ): Promise<void> {
   logger.info(`Starting automation for Invoice: ID=${invoice.id}, Bill=${invoice.bill_number}, Supplier=${invoice.supplier_name}`);
 
-  const hasTaxable = invoice.taxable_amount > 0;
-  const hasNonTaxable = invoice.non_taxable_amount !== undefined && invoice.non_taxable_amount > 0;
+  const taxableAmount = invoice.taxable_amount || 0;
+  const nonTaxableAmount = invoice.non_taxable_amount || 0;
+
+  const hasTaxable = taxableAmount > 0;
+  const hasNonTaxable = nonTaxableAmount > 0;
 
   if (!hasTaxable && !hasNonTaxable) {
     throw new Error('Invoice has neither Taxable Amount nor Non-Taxable Amount greater than 0.');
@@ -29,12 +32,12 @@ export async function processInvoice(
 
   // 1. Process Taxable amount entry if present
   if (hasTaxable) {
-    logger.info(`Processing Taxable entry ("Purchase With Tax") for Rs. ${invoice.taxable_amount}`);
+    logger.info(`Processing Taxable entry ("Purchase With Tax") for Rs. ${taxableAmount}`);
     await submitSinglePurchaseEntry(
       page,
       invoice,
       'Purchase With Tax',
-      invoice.taxable_amount,
+      taxableAmount,
       logger,
       entryUrl
     );
@@ -42,12 +45,12 @@ export async function processInvoice(
 
   // 2. Process Non-Taxable amount entry if present
   if (hasNonTaxable) {
-    logger.info(`Processing Non-Taxable entry ("Purchase Non Taxable") for Rs. ${invoice.non_taxable_amount}`);
+    logger.info(`Processing Non-Taxable entry ("Purchase Non Taxable") for Rs. ${nonTaxableAmount}`);
     await submitSinglePurchaseEntry(
       page,
       invoice,
       'Purchase Non Taxable',
-      invoice.non_taxable_amount!,
+      nonTaxableAmount,
       logger,
       entryUrl
     );
@@ -90,6 +93,25 @@ async function submitSinglePurchaseEntry(
   logger.info(`Selecting supplier from dropdown: ${supplierNameOnPage?.trim()}`);
   await page.click(SELECTORS.purchaseInvoice.supplierOptionFirst);
 
+  // Wait for Charge On table and default charges (like VAT ( +)) to load
+  const currentUrl = page.url();
+  const isMockPortal = currentUrl.includes('/mock-portal/');
+  
+  logger.info('Waiting for "Charge On" section/table and VAT ( +) checkbox to load...');
+  try {
+    const chargeOnRow = page.locator('text="VAT ( +)"').or(page.locator('text="Charge On"')).first();
+    await chargeOnRow.waitFor({ state: 'visible', timeout: isMockPortal ? 1000 : 15000 });
+    logger.info('"Charge On" / VAT section loaded on page.');
+  } catch (e: any) {
+    if (isMockPortal) {
+      logger.info('Skipped waiting for VAT section since we are on the mock portal.');
+    } else {
+      logger.warn(`Could not locate "Charge On" section: ${e.message}. Continuing sync...`);
+    }
+  }
+  // Wait a small timeout to let dynamic bindings register
+  await page.waitForTimeout(1500);
+
   // 3. Fill Supplier No (Bill Number)
   logger.info(`Filling Supplier No with Bill Number: ${invoice.bill_number}`);
   await page.fill(SELECTORS.purchaseInvoice.billNumberInput, String(invoice.bill_number));
@@ -121,7 +143,49 @@ async function submitSinglePurchaseEntry(
   await page.press(SELECTORS.purchaseInvoice.rateInput, 'Tab');
 
   // Wait a brief moment to ensure Angular calculates totals
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(1000);
+
+  // Verify VAT and calculations for taxable entry
+  if (itemName === 'Purchase With Tax') {
+    logger.info('Verifying VAT ( +) checkbox is checked...');
+    const vatRow = page.locator('tr:has-text("VAT ( +)")').first();
+    if (await vatRow.count() > 0) {
+      const checkbox = vatRow.locator('input[type="checkbox"]');
+      if (await checkbox.count() > 0) {
+        const isChecked = await checkbox.first().isChecked();
+        if (!isChecked) {
+          logger.info('VAT checkbox was not checked. Checking it now...');
+          await checkbox.first().check();
+          await page.waitForTimeout(1000); // Allow recalculation
+        } else {
+          logger.info('VAT checkbox is already checked.');
+        }
+      }
+    }
+
+    if (!isMockPortal) {
+      logger.info('Checking if VAT amount is correctly calculated...');
+      let vatVal = await getVatAmount(page, logger);
+      
+      if (vatVal <= 0) {
+        logger.warn(`VAT amount was read as ${vatVal}. Attempting to trigger recalculation by clicking out and back...`);
+        // Trigger a recalculation by focusing on rate and tab/enter
+        await page.focus(SELECTORS.purchaseInvoice.rateInput);
+        await page.press(SELECTORS.purchaseInvoice.rateInput, 'Enter');
+        await page.waitForTimeout(1500);
+        
+        // Recheck VAT
+        vatVal = await getVatAmount(page, logger);
+      }
+      
+      if (vatVal <= 0) {
+        logger.error('Failed to apply 13% VAT. Vat Amount is still 0 in the summary.');
+        throw new Error('VAT calculation verification failed: Vat Amount in summary is 0 for taxable entry.');
+      } else {
+        logger.info(`VAT verification passed: Vat Amount is Rs. ${vatVal}`);
+      }
+    }
+  }
 
   // 7. Click Save & Continue
   logger.info('Clicking Save & Continue button...');
@@ -140,4 +204,51 @@ async function submitSinglePurchaseEntry(
   );
 
   logger.info(`Saved entry for "${itemName}" successfully.`);
+}
+
+async function getVatAmount(page: Page, logger: AutomationLogger): Promise<number> {
+  const rowLocators = [
+    page.locator('tr:has-text("Vat Amount:")'),
+    page.locator('div:has-text("Vat Amount:")'),
+    page.locator('td:has-text("Vat Amount:")')
+  ];
+
+  for (const locator of rowLocators) {
+    if (await locator.count() > 0) {
+      const activeLoc = locator.last();
+      // Check if there is an input field inside this row
+      const inputLocator = activeLoc.locator('input');
+      if (await inputLocator.count() > 0) {
+        const valStr = await inputLocator.first().inputValue();
+        logger.info(`Found VAT Amount in input field inside summary row: ${valStr}`);
+        const parsed = parseFloat(valStr || '0');
+        if (!isNaN(parsed)) return parsed;
+      }
+      // Check text content of the row
+      const textContent = await activeLoc.textContent();
+      if (textContent) {
+        logger.info(`Found VAT Amount row text content: ${textContent}`);
+        // Remove label and extract number
+        const cleanText = textContent.replace(/Vat\s*Amount:/i, '').replace(/,/g, '').trim();
+        const val = parseFloat(cleanText);
+        if (!isNaN(val)) {
+          return val;
+        }
+      }
+    }
+  }
+
+  // Fallback: search for input fields with id/name/class containing vat or similar
+  const fallbackInputs = page.locator('input[id*="vat" i], input[name*="vat" i], input[class*="vat" i]');
+  const count = await fallbackInputs.count();
+  for (let i = 0; i < count; i++) {
+    const valStr = await fallbackInputs.nth(i).inputValue();
+    const val = parseFloat(valStr || '0');
+    if (!isNaN(val) && val > 0) {
+      logger.info(`Found VAT Amount in fallback input ${i}: ${val}`);
+      return val;
+    }
+  }
+
+  return 0;
 }

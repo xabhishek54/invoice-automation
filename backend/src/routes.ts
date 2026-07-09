@@ -312,66 +312,124 @@ router.put('/invoices/:id', async (req: Request, res: Response) => {
  */
 router.post('/confirm', async (req: Request, res: Response) => {
   try {
-    const { id } = req.body;
-    if (!id) {
-      return res.status(400).json({ error: 'Invoice ID is required for confirmation.' });
-    }
+    const { id, ids } = req.body;
 
-    const { isValid, errors, sanitized } = validateInvoiceData(req.body);
-    if (!isValid) {
-      return res.status(400).json({ error: errors.join(' ') });
-    }
-
-    // Check existence
-    const existing = await prisma.invoice.findUnique({ where: { id } });
-    if (!existing) {
-      return res.status(404).json({ error: 'Invoice not found.' });
-    }
-
-    // Update status to Verified in DB
-    const confirmedInvoice = await prisma.invoice.update({
-      where: { id },
-      data: {
-        ...sanitized,
-        status: 'Verified'
+    if (id && !ids) {
+      const { isValid, errors, sanitized } = validateInvoiceData(req.body);
+      if (!isValid) {
+        return res.status(400).json({ error: errors.join(' ') });
       }
-    });
 
-    // Send payload back to n8n
-    const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL || 'http://localhost:5678/webhook/invoice-confirmed';
-    const payload = {
-      id: confirmedInvoice.id,
-      supplier_name: confirmedInvoice.supplier_name,
-      supplier_pan: confirmedInvoice.supplier_pan,
-      bill_number: confirmedInvoice.bill_number,
-      miti_bs: confirmedInvoice.miti_bs,
-      taxable_amount: confirmedInvoice.taxable_amount,
-      non_taxable_amount: confirmedInvoice.non_taxable_amount,
-      status: confirmedInvoice.status,
-      verified_at: confirmedInvoice.updated_at
-    };
+      const existing = await prisma.invoice.findUnique({ where: { id } });
+      if (!existing) {
+        return res.status(404).json({ error: 'Invoice not found.' });
+      }
 
-    let n8nNotificationSent = false;
-    let n8nErrorMessage = '';
+      const confirmedInvoice = await prisma.invoice.update({
+        where: { id },
+        data: {
+          ...sanitized,
+          status: 'Verified'
+        }
+      });
 
-    try {
-      console.log(`Sending confirmation payload to n8n webhook at: ${n8nWebhookUrl}`);
-      const response = await axios.post(n8nWebhookUrl, payload, { timeout: 5000 });
-      console.log('n8n response code:', response.status);
-      n8nNotificationSent = true;
-    } catch (e: any) {
-      console.error('Failed to notify n8n webhook:', e.message);
-      n8nErrorMessage = e.message;
+      const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL || 'http://localhost:5678/webhook/invoice-confirmed';
+      const payload = {
+        id: confirmedInvoice.id,
+        supplier_name: confirmedInvoice.supplier_name,
+        supplier_pan: confirmedInvoice.supplier_pan,
+        bill_number: confirmedInvoice.bill_number,
+        miti_bs: confirmedInvoice.miti_bs,
+        taxable_amount: confirmedInvoice.taxable_amount,
+        non_taxable_amount: confirmedInvoice.non_taxable_amount,
+        status: confirmedInvoice.status,
+        verified_at: confirmedInvoice.updated_at
+      };
+
+      let n8nNotificationSent = false;
+      let n8nErrorMessage = '';
+
+      try {
+        console.log(`Sending confirmation payload to n8n webhook at: ${n8nWebhookUrl}`);
+        const response = await axios.post(n8nWebhookUrl, payload, { timeout: 5000 });
+        console.log('n8n response code:', response.status);
+        n8nNotificationSent = true;
+      } catch (e: any) {
+        console.error('Failed to notify n8n webhook:', e.message);
+        n8nErrorMessage = e.message;
+      }
+
+      return res.json({
+        message: 'Invoice confirmed and verified successfully.',
+        invoice: confirmedInvoice,
+        n8nNotificationSent,
+        n8nError: n8nErrorMessage || null
+      });
+    }
+
+    // Bulk confirm from database
+    const targetIds = Array.isArray(ids) ? ids.map(i => String(i)) : [];
+    if (targetIds.length === 0) {
+      return res.status(400).json({ error: 'Invoice ID or list of IDs is required for confirmation.' });
+    }
+
+    const results: any[] = [];
+    const errors: string[] = [];
+
+    for (const targetId of targetIds) {
+      try {
+        const existing = await prisma.invoice.findUnique({ where: { id: targetId } });
+        if (!existing) {
+          errors.push(`Invoice ${targetId} not found.`);
+          continue;
+        }
+
+        const { isValid, errors: valErrors, sanitized } = validateInvoiceData(existing);
+        if (!isValid) {
+          errors.push(`Invoice ${targetId} validation failed: ${valErrors.join(' ')}`);
+          continue;
+        }
+
+        const confirmedInvoice = await prisma.invoice.update({
+          where: { id: targetId },
+          data: {
+            ...sanitized,
+            status: 'Verified'
+          }
+        });
+
+        const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL || 'http://localhost:5678/webhook/invoice-confirmed';
+        const payload = {
+          id: confirmedInvoice.id,
+          supplier_name: confirmedInvoice.supplier_name,
+          supplier_pan: confirmedInvoice.supplier_pan,
+          bill_number: confirmedInvoice.bill_number,
+          miti_bs: confirmedInvoice.miti_bs,
+          taxable_amount: confirmedInvoice.taxable_amount,
+          non_taxable_amount: confirmedInvoice.non_taxable_amount,
+          status: confirmedInvoice.status,
+          verified_at: confirmedInvoice.updated_at
+        };
+
+        try {
+          await axios.post(n8nWebhookUrl, payload, { timeout: 5000 });
+        } catch (e: any) {
+          console.error(`Failed to notify n8n webhook for invoice ${targetId}:`, e.message);
+        }
+
+        results.push(confirmedInvoice);
+      } catch (err: any) {
+        errors.push(`Invoice ${targetId} failed: ${err.message}`);
+      }
     }
 
     return res.json({
-      message: 'Invoice confirmed and verified successfully.',
-      invoice: confirmedInvoice,
-      n8nNotificationSent,
-      n8nError: n8nErrorMessage || null
+      message: `Confirmed ${results.length} invoice(s) successfully.${errors.length > 0 ? ` Failed: ${errors.join(', ')}` : ''}`,
+      invoices: results,
+      errors: errors.length > 0 ? errors : undefined
     });
   } catch (error: any) {
-    console.error('Error confirming invoice:', error);
+    console.error('Error confirming invoice(s):', error);
     return res.status(500).json({ error: 'Internal server error.' });
   }
 });
@@ -381,31 +439,38 @@ router.post('/confirm', async (req: Request, res: Response) => {
  */
 router.post('/reject', async (req: Request, res: Response) => {
   try {
-    const { id } = req.body;
-    if (!id) {
-      return res.status(400).json({ error: 'Invoice ID is required for rejection.' });
+    const { id, ids } = req.body;
+
+    const targetIds: string[] = [];
+    if (id) targetIds.push(String(id));
+    if (ids && Array.isArray(ids)) {
+      targetIds.push(...ids.map(i => String(i)));
     }
 
-    // Check existence
-    const existing = await prisma.invoice.findUnique({ where: { id } });
-    if (!existing) {
-      return res.status(404).json({ error: 'Invoice not found.' });
+    if (targetIds.length === 0) {
+      return res.status(400).json({ error: 'Invoice ID or list of IDs is required for rejection.' });
     }
 
-    // Update status to Rejected
-    const rejectedInvoice = await prisma.invoice.update({
-      where: { id },
-      data: {
-        status: 'Rejected'
+    const results: any[] = [];
+    for (const targetId of targetIds) {
+      const existing = await prisma.invoice.findUnique({ where: { id: targetId } });
+      if (existing) {
+        const rejectedInvoice = await prisma.invoice.update({
+          where: { id: targetId },
+          data: {
+            status: 'Rejected'
+          }
+        });
+        results.push(rejectedInvoice);
       }
-    });
+    }
 
     return res.json({
-      message: 'Invoice rejected successfully.',
-      invoice: rejectedInvoice
+      message: `Rejected ${results.length} invoice(s) successfully.`,
+      invoices: results
     });
   } catch (error: any) {
-    console.error('Error rejecting invoice:', error);
+    console.error('Error rejecting invoice(s):', error);
     return res.status(500).json({ error: 'Internal server error.' });
   }
 });

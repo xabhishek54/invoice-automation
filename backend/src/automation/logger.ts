@@ -23,6 +23,12 @@ export class AutomationLogger {
     console.error(logLine);
   }
 
+  public warn(message: string): void {
+    const logLine = `[WARN] ${this.formatTime()} - ${message}`;
+    this.logs.push(logLine);
+    console.warn(logLine);
+  }
+
   public getLogs(): string {
     return this.logs.join('\n');
   }
