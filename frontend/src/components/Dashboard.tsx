@@ -19,7 +19,8 @@ import {
   Calendar,
   AlertTriangle,
   X,
-  Settings
+  Settings,
+  Save
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { ToastType } from './Toast';
@@ -54,10 +55,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [stopOnError, setStopOnError] = useState<boolean>(true);
-  const [entryUrl, setEntryUrl] = useState<string>(
-    localStorage.getItem('khatacloud_entry_url') || 
-    'http://rishunew.khatacloud.com/Home/entry?TransactionType=143&ComCode=1'
-  );
+  const [entryUrl, setEntryUrl] = useState<string>('');
+  const [portalUsername, setPortalUsername] = useState<string>('');
+  const [portalPassword, setPortalPassword] = useState<string>('');
+  const [savingSettings, setSavingSettings] = useState<boolean>(false);
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const { theme, toggleTheme } = useTheme();
 
@@ -195,8 +196,39 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
     }
   };
 
+  const fetchSettings = async () => {
+    try {
+      const res = await axios.get('/api/settings');
+      setPortalUsername(res.data.portal_username || '');
+      setPortalPassword(res.data.portal_password || '');
+      setEntryUrl(res.data.portal_entry_url || '');
+    } catch (e: any) {
+      console.error('Failed to load settings:', e);
+      showToast('Failed to load settings from server.', 'error');
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    try {
+      setSavingSettings(true);
+      await axios.post('/api/settings', {
+        portal_username: portalUsername,
+        portal_password: portalPassword,
+        portal_entry_url: entryUrl
+      });
+      showToast('Settings saved successfully.', 'success');
+      await fetchSettings();
+    } catch (e: any) {
+      console.error('Failed to save settings:', e);
+      showToast('Failed to save settings.', 'error');
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
   useEffect(() => {
     fetchInvoices();
+    fetchSettings();
   }, []);
 
   // Poll server if any automation is running
@@ -367,7 +399,35 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
               <span>Automation & Sync Settings</span>
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {/* Setting 1: Purchase Entry URL */}
+              {/* Setting 1: Username */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Khatacloud Login Email / Username
+                </label>
+                <input
+                  type="text"
+                  value={portalUsername}
+                  onChange={(e) => setPortalUsername(e.target.value)}
+                  placeholder="Enter login email or username"
+                  className="w-full text-xs font-medium px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent dark:text-slate-100"
+                />
+              </div>
+
+              {/* Setting 2: Password */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Khatacloud Login Password
+                </label>
+                <input
+                  type="password"
+                  value={portalPassword}
+                  onChange={(e) => setPortalPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full text-xs font-medium px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent dark:text-slate-100"
+                />
+              </div>
+
+              {/* Setting 3: Purchase Entry URL */}
               <div className="flex flex-col gap-1.5">
                 <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   Khatacloud Purchase Entry URL
@@ -375,17 +435,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
                 <input
                   type="text"
                   value={entryUrl}
-                  onChange={(e) => {
-                    setEntryUrl(e.target.value);
-                    localStorage.setItem('khatacloud_entry_url', e.target.value);
-                  }}
+                  onChange={(e) => setEntryUrl(e.target.value)}
                   placeholder="http://rishunew.khatacloud.com/Home/entry?..."
                   className="w-full text-xs font-medium font-mono px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent dark:text-slate-100"
                 />
               </div>
 
-              {/* Setting 2: Stop on Error */}
-              <div className="flex flex-col justify-end">
+              {/* Setting 4: Stop on Error & Save Button */}
+              <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-4">
                 <label className="flex items-center gap-3 cursor-pointer bg-slate-50 hover:bg-slate-100 dark:bg-slate-950 dark:hover:bg-slate-900/50 px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 select-none transition-all w-fit h-[42px]">
                   <input
                     type="checkbox"
@@ -395,6 +452,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
                   />
                   <span className="text-xs font-bold text-slate-600 dark:text-slate-300">Stop Sync on Error</span>
                 </label>
+
+                <button
+                  onClick={handleSaveSettings}
+                  disabled={savingSettings}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-brand hover:bg-brand-dark text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {savingSettings ? (
+                    <RefreshCw className="w-4.5 h-4.5 animate-spin" />
+                  ) : (
+                    <Save className="w-4.5 h-4.5" />
+                  )}
+                  <span>Save Settings</span>
+                </button>
               </div>
             </div>
           </div>
@@ -592,10 +662,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
                     <tr
                       key={invoice.id}
                       onClick={() => onSelectInvoice(filteredInvoices.map(i => i.id), index)}
-                      className="group cursor-pointer hover:bg-slate-100/50 dark:hover:bg-slate-950/30 transition-colors"
+                      className={`group cursor-pointer hover:bg-slate-100/50 dark:hover:bg-slate-950/30 transition-colors ${
+                        invoice.non_taxable_amount !== undefined && invoice.non_taxable_amount > 0
+                          ? 'bg-cyan-500/[0.02] dark:bg-cyan-500/[0.01]'
+                          : ''
+                      }`}
                     >
-                      <td className="py-4 px-6 font-semibold text-slate-800 dark:text-slate-200">
-                        {invoice.supplier_name}
+                      <td className={`py-4 px-6 font-semibold text-slate-800 dark:text-slate-200 ${
+                        invoice.non_taxable_amount !== undefined && invoice.non_taxable_amount > 0
+                          ? 'border-l-4 border-cyan-500 dark:border-l-4 dark:border-cyan-400'
+                          : ''
+                      }`}>
+                        <div className="flex items-center gap-2">
+                          <span>{invoice.supplier_name}</span>
+                          {invoice.non_taxable_amount !== undefined && invoice.non_taxable_amount > 0 && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase bg-cyan-100 text-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-400 border border-cyan-200/50 dark:border-cyan-800/30 animate-pulse tracking-wider">
+                              Non-Taxable
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-4 px-6 text-slate-500 dark:text-slate-400 font-mono text-sm">
                         {invoice.bill_number}

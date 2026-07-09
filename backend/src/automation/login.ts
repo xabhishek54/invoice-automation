@@ -1,6 +1,9 @@
 import { Page } from 'playwright';
 import { SELECTORS } from './selectors';
 import { AutomationLogger } from './logger';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
 
 export async function loginToPortal(page: Page, logger: AutomationLogger): Promise<void> {
   logger.info('Checking session status...');
@@ -16,13 +19,27 @@ export async function loginToPortal(page: Page, logger: AutomationLogger): Promi
     }
   }
 
-  logger.info(`Navigating to login page: ${SELECTORS.login.url}`);
-  await page.goto(SELECTORS.login.url, { waitUntil: 'load' });
+  // Fetch credentials from DB settings
+  const usernameSetting = await prisma.setting.findUnique({ where: { key: 'portal_username' } });
+  const passwordSetting = await prisma.setting.findUnique({ where: { key: 'portal_password' } });
+  
+  const username = usernameSetting?.value;
+  const password = passwordSetting?.value;
+
+  if (!username || !password) {
+    logger.error('Khatacloud login email and password are not configured in settings.');
+    throw new Error('Khatacloud login credentials are not configured. Please set them in settings.');
+  }
+
+  const loginUrlSetting = await prisma.setting.findUnique({ where: { key: 'portal_login_url' } });
+  const loginUrl = loginUrlSetting?.value || SELECTORS.login.url;
+
+  logger.info(`Navigating to login page: ${loginUrl}`);
+  await page.goto(loginUrl, { waitUntil: 'load' });
 
   logger.info('Filling login credentials...');
-  // Fill Username and Password (both are rajesh.raja99@gmail.com)
-  await page.fill(SELECTORS.login.usernameInput, 'rajesh.raja99@gmail.com');
-  await page.fill(SELECTORS.login.passwordInput, 'rajesh.raja99@gmail.com');
+  await page.fill(SELECTORS.login.usernameInput, username);
+  await page.fill(SELECTORS.login.passwordInput, password);
   
   logger.info('Submitting login form...');
   await Promise.all([

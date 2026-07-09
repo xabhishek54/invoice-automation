@@ -19,7 +19,8 @@ import {
   Loader2,
   CheckCircle,
   RefreshCw,
-  Play
+  Play,
+  Sparkles
 } from 'lucide-react';
 import { Invoice } from './Dashboard';
 import { ToastType } from './Toast';
@@ -712,7 +713,11 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                 <div className="absolute inset-0 pointer-events-none border border-white/5 bg-transparent"></div>
 
                 {/* Floating Image Control Bar */}
-                <div className="absolute bottom-5 left-1/2 transform -translate-x-1/2 z-20 flex items-center gap-1 p-1 rounded-2xl bg-slate-900/85 text-white backdrop-blur border border-slate-800 shadow-xl">
+                <div 
+                  className="absolute bottom-5 left-1/2 transform -translate-x-1/2 z-20 flex items-center gap-1 p-1 rounded-2xl bg-slate-900/85 text-white backdrop-blur border border-slate-800 shadow-xl"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
                   <button 
                     onClick={() => setZoom(z => Math.max(0.5, z - 0.2))}
                     className="p-2 rounded-xl hover:bg-slate-800 transition-colors"
@@ -959,6 +964,18 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
               </div>
             )}
 
+            {Number(formData.non_taxable_amount) > 0 && (
+              <div className="flex items-start gap-3 p-4.5 bg-cyan-500/10 dark:bg-cyan-950/20 border border-cyan-500/20 dark:border-cyan-800/30 rounded-2xl text-xs text-cyan-600 dark:text-cyan-400 mb-6 shadow-sm">
+                <Sparkles className="w-5 h-5 text-cyan-500 flex-shrink-0 animate-pulse" />
+                <div>
+                  <h4 className="font-extrabold uppercase tracking-wider text-[10px] text-cyan-700 dark:text-cyan-300">Non-Taxable Amount Detected</h4>
+                  <p className="mt-0.5 font-semibold leading-relaxed">
+                    This invoice contains a non-taxable purchase entry of <strong>Rs. {Number(formData.non_taxable_amount).toLocaleString('en-NP', { minimumFractionDigits: 2 })}</strong>. The automation system will submit both Taxable and Non-Taxable entries sequentially.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Configurable Form Fields */}
             <form className="grid grid-cols-1 md:grid-cols-2 gap-5" onSubmit={(e) => e.preventDefault()}>
               {formFieldsConfig.map((field) => {
@@ -970,8 +987,13 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
 
                 return (
                   <div key={field.key} className={`flex flex-col gap-1.5 ${colSpanClass}`}>
-                    <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
-                      {field.label}
+                    <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                      <span>{field.label}</span>
+                      {field.key === 'non_taxable_amount' && Number(formData.non_taxable_amount) > 0 && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-extrabold uppercase bg-cyan-100 text-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-400 border border-cyan-200/50 dark:border-cyan-800/30 animate-pulse tracking-wider">
+                          Non-Taxable Detected
+                        </span>
+                      )}
                     </label>
                     <div className="relative">
                       {isAmountField && (
@@ -989,7 +1011,10 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                         } ${
                           isAmountField ? 'pl-12 text-lg text-indigo-600 dark:text-indigo-400' : ''
                         } ${
-                          error ? 'border-rose-500' : 'border-slate-200/80 dark:border-slate-800/80 focus:border-brand/40 dark:focus:border-brand/40'
+                          error ? 'border-rose-500' : 
+                          (field.key === 'non_taxable_amount' && Number(formData.non_taxable_amount) > 0)
+                            ? 'border-cyan-500/80 dark:border-cyan-400/80 ring-2 ring-cyan-500/10 dark:ring-cyan-400/10 bg-cyan-500/[0.01] focus:border-cyan-500 dark:focus:border-cyan-400'
+                            : 'border-slate-200/80 dark:border-slate-800/80 focus:border-brand/40 dark:focus:border-brand/40'
                         }`}
                         placeholder={field.placeholder}
                       />

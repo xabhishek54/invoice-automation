@@ -21,6 +21,15 @@ export async function runAutomationBatch(invoiceIds: string[], stopOnError: bool
   globalLogger.info(`Starting batch run for ${invoiceIds.length} invoice(s)... (stopOnError: ${stopOnError}, entryUrl: ${entryUrl || 'default'})`);
 
   try {
+    // 0. Verify settings
+    const entryUrlSetting = await prisma.setting.findUnique({ where: { key: 'portal_entry_url' } });
+    const dbEntryUrl = entryUrlSetting?.value;
+    const finalEntryUrl = dbEntryUrl || entryUrl;
+
+    if (!finalEntryUrl) {
+      throw new Error('Khatacloud Purchase Entry URL is not configured. Please set it in settings.');
+    }
+
     // 1. Initialize browser instance for the entire batch
     await browserService.startBrowser(globalLogger);
     const page = await browserService.getPage(globalLogger);
@@ -57,7 +66,7 @@ export async function runAutomationBatch(invoiceIds: string[], stopOnError: bool
         });
 
         // Run Playwright form automation
-        await processInvoice(page, invoice, invoiceLogger, entryUrl);
+        await processInvoice(page, invoice, invoiceLogger, finalEntryUrl);
 
         // Update DB to Completed
         const finishTime = new Date();

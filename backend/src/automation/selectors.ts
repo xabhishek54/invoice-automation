@@ -7,7 +7,7 @@ export const SELECTORS = {
     dashboardIndicator: '.main-sidebar, a[href="/Home/Dashboard"]'
   },
   purchaseInvoice: {
-    url: 'http://rishunew.khatacloud.com/Home/entry?TransactionType=143&ComCode=1',
+    url: '',
     dateInput: '#nepaliDate5',
     supplierInput: 'input[name="customer_input"]',
     supplierDropdown: '#customers-list',

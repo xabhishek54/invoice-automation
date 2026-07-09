@@ -25,3 +25,9 @@ model Invoice {
   created_at     DateTime @default(now())
   updated_at     DateTime @updatedAt
 }
+
+model Setting {
+  key   String @id
+  value String
+}
+

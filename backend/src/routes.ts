@@ -623,5 +623,69 @@ router.post('/automation/start', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * 11. GET /api/settings - Fetch portal configuration settings (masked)
+ */
+router.get('/settings', async (req: Request, res: Response) => {
+  try {
+    const settings = await prisma.setting.findMany();
+    const settingsMap = settings.reduce((acc, curr) => {
+      acc[curr.key] = curr.value;
+      return acc;
+    }, {} as Record<string, string>);
+
+    const responseSettings = {
+      portal_username: settingsMap['portal_username'] || '',
+      portal_password: settingsMap['portal_password'] ? '••••••••' : '',
+      portal_entry_url: settingsMap['portal_entry_url'] || '',
+      portal_login_url: settingsMap['portal_login_url'] || 'http://rishunew.khatacloud.com/Account/Login'
+    };
+
+    return res.json(responseSettings);
+  } catch (error: any) {
+    console.error('Error fetching settings:', error);
+    return res.status(500).json({ error: 'Failed to retrieve settings: ' + error.message });
+  }
+});
+
+/**
+ * 12. POST /api/settings - Update portal configuration settings
+ */
+router.post('/settings', async (req: Request, res: Response) => {
+  try {
+    const { portal_username, portal_password, portal_entry_url, portal_login_url } = req.body;
+
+    const updates: { key: string; value: string }[] = [];
+
+    if (portal_username !== undefined) {
+      updates.push({ key: 'portal_username', value: portal_username.trim() });
+    }
+    if (portal_entry_url !== undefined) {
+      updates.push({ key: 'portal_entry_url', value: portal_entry_url.trim() });
+    }
+    if (portal_login_url !== undefined) {
+      updates.push({ key: 'portal_login_url', value: portal_login_url.trim() });
+    }
+
+    if (portal_password !== undefined && portal_password !== '••••••••' && portal_password !== '') {
+      updates.push({ key: 'portal_password', value: portal_password.trim() });
+    }
+
+    for (const update of updates) {
+      await prisma.setting.upsert({
+        where: { key: update.key },
+        update: { value: update.value },
+        create: { key: update.key, value: update.value }
+      });
+    }
+
+    return res.json({ message: 'Settings saved successfully.' });
+  } catch (error: any) {
+    console.error('Error saving settings:', error);
+    return res.status(500).json({ error: 'Failed to save settings: ' + error.message });
+  }
+});
+
 export default router;
+
 
