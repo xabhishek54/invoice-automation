@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nepal Inland Revenue Department - Purchase Invoice Entry (Mock Portal)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background: radial-gradient(circle at 50% 50%, #0f172a 0%, #020617 100%);
+    }
+  </style>
+</head>
+<body class="min-h-screen p-6 md:p-12 text-slate-100 flex flex-col items-center">
+  <!-- Top bar -->
+  <div class="w-full max-w-4xl flex justify-between items-center mb-8 pb-4 border-b border-slate-800">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 bg-red-600/10 border border-red-500/20 text-red-500 rounded-full flex items-center justify-center">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+        </svg>
+      </div>
+      <div>
+        <h1 class="text-lg font-extrabold text-white">Taxpayer Portal</h1>
+        <p class="text-[10px] text-slate-400 font-bold uppercase">Government of Nepal • IRD</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        Logged In: 610121130
+      </span>
+      <button onclick="logout()" class="text-xs text-rose-400 hover:text-rose-300 font-bold underline bg-transparent border-0 cursor-pointer">Logout</button>
+    </div>
+  </div>
+
+  <div class="w-full max-w-4xl bg-slate-900/40 backdrop-blur-xl border border-slate-800/80 rounded-3xl p-8 shadow-2xl relative">
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h2 class="text-xl font-bold text-white tracking-tight" id="dashboard-indicator">Add Purchase Invoice</h2>
+        <p class="text-xs text-slate-400 mt-1">Enter tax-related purchase details sequentially.</p>
+      </div>
+    </div>
+
+    <!-- Invoice Entry Form -->
+    <form id="invoiceForm" class="space-y-6">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- Date in BS -->
+        <div>
+          <label for="miti_bs" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">BS Date (YYYY-MM-DD)</label>
+          <input type="text" id="miti_bs" name="miti_bs" required placeholder="2082-10-25" 
+            class="w-full px-4.5 py-3 bg-slate-950/50 border border-slate-800 text-white rounded-xl text-sm focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all font-mono font-bold">
+        </div>
+
+        <!-- Bill Number -->
+        <div>
+          <label for="bill_number" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Bill Number</label>
+          <input type="number" id="bill_number" name="bill_number" required placeholder="Enter Bill No" 
+            class="w-full px-4.5 py-3 bg-slate-950/50 border border-slate-800 text-white rounded-xl text-sm focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all font-mono font-bold">
+        </div>
+
+        <!-- Supplier PAN -->
+        <div class="relative">
+          <label for="supplier_pan" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Supplier PAN</label>
+          <input type="text" id="supplier_pan" name="supplier_pan" required placeholder="Enter Supplier PAN" autocomplete="off"
+            class="w-full px-4.5 py-3 bg-slate-950/50 border border-slate-800 text-white rounded-xl text-sm focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all font-mono font-bold">
+          
+          <!-- Autocomplete Dropdown -->
+          <div id="supplier_dropdown" class="absolute left-0 right-0 mt-2 bg-slate-950 border border-slate-800 rounded-xl shadow-xl overflow-hidden z-20 hidden">
+            <!-- Loading -->
+            <div id="supplier-loading" class="px-4 py-3 text-xs text-slate-500 flex items-center gap-2">
+              <svg class="animate-spin h-4.5 w-4.5 text-red-500" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              Searching PAN registry...
+            </div>
+            <!-- Options Container -->
+            <div id="supplier-options" class="hidden">
+              <button type="button" id="supplier_opt_0" class="w-full text-left px-4.5 py-3 text-xs text-white hover:bg-slate-800 font-bold transition-all border-none bg-transparent cursor-pointer">
+                <!-- Supplier Name will be filled dynamically -->
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Item Selection -->
+        <div class="relative">
+          <label for="item_input" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Item Name / Category</label>
+          <input type="text" id="item_input" name="item_input" required placeholder="Type Item Category" autocomplete="off"
+            class="w-full px-4.5 py-3 bg-slate-950/50 border border-slate-800 text-white rounded-xl text-sm focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all font-bold">
+          
+          <!-- Autocomplete Dropdown -->
+          <div id="item_dropdown" class="absolute left-0 right-0 mt-2 bg-slate-950 border border-slate-800 rounded-xl shadow-xl overflow-hidden z-20 hidden">
+            <!-- Loading -->
+            <div id="item-loading" class="px-4 py-3 text-xs text-slate-500 flex items-center gap-2">
+              <svg class="animate-spin h-4.5 w-4.5 text-red-500" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              Searching items...
+            </div>
+            <!-- Options Container -->
+            <div id="item-options" class="hidden">
+              <button type="button" id="item_opt_0" class="w-full text-left px-4.5 py-3 text-xs text-white hover:bg-slate-800 font-bold transition-all border-none bg-transparent cursor-pointer">
+                Purchase With Tax
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quantity -->
+        <div>
+          <label for="quantity" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Quantity</label>
+          <input type="number" id="quantity" name="quantity" required value="1"
+            class="w-full px-4.5 py-3 bg-slate-950/50 border border-slate-800 text-white rounded-xl text-sm focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all font-mono font-bold">
+        </div>
+
+        <!-- Rate -->
+        <div>
+          <label for="rate" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Rate (Rs.)</label>
+          <input type="number" id="rate" name="rate" required step="0.01" placeholder="Enter taxable rate"
+            class="w-full px-4.5 py-3 bg-slate-950/50 border border-slate-800 text-white rounded-xl text-sm focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all font-mono font-bold">
+        </div>
+      </div>
+
+      <!-- Action Button and Status -->
+      <div class="flex flex-col gap-4 pt-4 border-t border-slate-800/80">
+        <!-- Status message -->
+        <div id="status_message" class="text-sm font-semibold text-emerald-400 hidden p-4.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center gap-2">
+          <!-- Text filled dynamically -->
+        </div>
+
+        <!-- Submit Button -->
+        <button type="submit" id="save_btn"
+          class="w-full py-4 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition-all duration-200 active:scale-[0.98] shadow-lg shadow-red-600/20 flex items-center justify-center gap-2">
+          <span>Save & Continue</span>
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <script>
+    // Verify Cookie session
+    function checkSession() {
+      const cookies = document.cookie.split(';');
+      const sessionCookie = cookies.find(c => c.trim().startsWith('session_id='));
+      if (!sessionCookie) {
+        window.location.href = 'login.html';
+      }
+    }
+    checkSession();
+
+    function logout() {
+      document.cookie = "session_id=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC;";
+      window.location.href = 'login.html';
+    }
+
+    // Mock Registry for Supplier PAN to Names
+    const supplierRegistry = {
+      '610121130': 'JASMINE HYGIENE PRODUCTS PVT. LTD',
+      '302847591': 'KATHMANDU TRADING CONCERN'
+    };
+
+    const panInput = document.getElementById('supplier_pan');
+    const supplierDropdown = document.getElementById('supplier_dropdown');
+    const supplierLoading = document.getElementById('supplier-loading');
+    const supplierOptions = document.getElementById('supplier-options');
+    const supplierOpt0 = document.getElementById('supplier_opt_0');
+
+    let supplierTimeout = null;
+
+    panInput.addEventListener('input', function() {
+      const val = this.value.trim();
+      if (val.length >= 3) {
+        supplierDropdown.classList.remove('hidden');
+        supplierLoading.classList.remove('hidden');
+        supplierOptions.classList.add('hidden');
+
+        if (supplierTimeout) clearTimeout(supplierTimeout);
+        supplierTimeout = setTimeout(() => {
+          supplierLoading.classList.add('hidden');
+          supplierOptions.classList.remove('hidden');
+          
+          // Match supplier or use a generic one
+          const name = supplierRegistry[val] || 'GENERIC SUPPLIER LTD (PAN: ' + val + ')';
+          supplierOpt0.textContent = name;
+        }, 800); // 800ms lookup delay
+      } else {
+        supplierDropdown.classList.add('hidden');
+      }
+    });
+
+    supplierOpt0.addEventListener('click', function() {
+      panInput.value = this.textContent.trim();
+      supplierDropdown.classList.add('hidden');
+    });
+
+    // Item Autocomplete Selection
+    const itemInput = document.getElementById('item_input');
+    const itemDropdown = document.getElementById('item_dropdown');
+    const itemLoading = document.getElementById('item-loading');
+    const itemOptions = document.getElementById('item-options');
+    const itemOpt0 = document.getElementById('item_opt_0');
+
+    let itemTimeout = null;
+
+    itemInput.addEventListener('input', function() {
+      const val = this.value.trim();
+      if (val.length >= 2) {
+        itemDropdown.classList.remove('hidden');
+        itemLoading.classList.remove('hidden');
+        itemOptions.classList.add('hidden');
+
+        if (itemTimeout) clearTimeout(itemTimeout);
+        itemTimeout = setTimeout(() => {
+          itemLoading.classList.add('hidden');
+          itemOptions.classList.remove('hidden');
+        }, 500);
+      } else {
+        itemDropdown.classList.add('hidden');
+      }
+    });
+
+    itemOpt0.addEventListener('click', function() {
+      itemInput.value = 'Purchase With Tax';
+      itemDropdown.classList.add('hidden');
+    });
+
+    // Form Submit handling (Mock Saving)
+    const form = document.getElementById('invoiceForm');
+    const saveBtn = document.getElementById('save_btn');
+    const statusMsg = document.getElementById('status_message');
+
+    form.addEventListener('submit', function(e) {
+      e.preventDefault();
+      
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = `
+        <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        Saving to Tax Ledger...
+      `;
+
+      statusMsg.classList.add('hidden');
+
+      setTimeout(() => {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = '<span>Save & Continue</span>';
+
+        statusMsg.innerHTML = `
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+          </svg>
+          <span>Invoice Saved Successfully! Ledger reference: ERP-${Math.round(Math.random() * 900000 + 100000)}</span>
+        `;
+        statusMsg.classList.remove('hidden');
+      }, 1500); // 1.5 seconds mock latency for saving
+    });
+  </script>
+</body>
+</html>

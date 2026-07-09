@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nepal Government - Inland Revenue Department (Mock Portal)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background: radial-gradient(circle at 50% 50%, #1e293b 0%, #0f172a 100%);
+    }
+  </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+  <div class="w-full max-w-md bg-slate-900/60 backdrop-blur-xl border border-slate-800 rounded-3xl p-8 shadow-2xl relative overflow-hidden">
+    <!-- Header -->
+    <div class="text-center mb-8">
+      <div class="w-16 h-16 bg-red-600/10 border border-red-500/20 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+        </svg>
+      </div>
+      <h1 class="text-xl font-bold text-white tracking-tight">Government of Nepal</h1>
+      <p class="text-xs text-red-500 font-bold uppercase mt-1">Inland Revenue Department</p>
+      <p class="text-[11px] text-slate-400 mt-2">Mock Taxpayer Portal for Dev & Automation</p>
+    </div>
+
+    <!-- Login Form -->
+    <form id="loginForm" class="space-y-5">
+      <!-- PAN -->
+      <div>
+        <label for="pan" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Taxpayer PAN</label>
+        <input type="text" id="pan" name="pan" required placeholder="Enter 9-digit PAN" 
+          class="w-full px-4 py-3 bg-slate-950/50 border border-slate-800 text-white rounded-xl text-sm focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all font-mono font-bold">
+      </div>
+
+      <!-- Username -->
+      <div>
+        <label for="username" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Username</label>
+        <input type="text" id="username" name="username" required placeholder="Enter Username" 
+          class="w-full px-4 py-3 bg-slate-950/50 border border-slate-800 text-white rounded-xl text-sm focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all font-bold">
+      </div>
+
+      <!-- Password -->
+      <div>
+        <label for="password" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Password</label>
+        <input type="password" id="password" name="password" required placeholder="••••••••" 
+          class="w-full px-4 py-3 bg-slate-950/50 border border-slate-800 text-white rounded-xl text-sm focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all">
+      </div>
+
+      <!-- Captcha -->
+      <div>
+        <label for="captcha" class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Captcha Verification</label>
+        <div class="flex gap-3">
+          <input type="text" id="captcha" name="captcha" required placeholder="Enter code" 
+            class="flex-1 px-4 py-3 bg-slate-950/50 border border-slate-800 text-white rounded-xl text-sm focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all font-mono font-bold text-center">
+          <div class="px-5 py-3 bg-slate-800 border border-slate-700 text-white font-mono font-bold tracking-widest text-lg rounded-xl select-none flex items-center justify-center" id="captcha-img">
+            1234
+          </div>
+        </div>
+      </div>
+
+      <!-- Error message -->
+      <div id="error-msg" class="text-xs text-red-500 font-semibold hidden"></div>
+
+      <!-- Login Button -->
+      <button type="submit" id="login-btn"
+        class="w-full py-3.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition-all duration-200 active:scale-[0.98] shadow-lg shadow-red-600/20">
+        Login to Taxpayer Portal
+      </button>
+    </form>
+  </div>
+
+  <script>
+    // Pre-fill captcha for easy automation testing
+    document.getElementById('captcha').value = '1234';
+
+    document.getElementById('loginForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      const pan = document.getElementById('pan').value.trim();
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value.trim();
+      const captcha = document.getElementById('captcha').value.trim();
+      const errorMsg = document.getElementById('error-msg');
+
+      if (pan.length !== 9 || !/^\d+$/.test(pan)) {
+        errorMsg.textContent = 'PAN must be exactly a 9-digit number.';
+        errorMsg.classList.remove('hidden');
+        return;
+      }
+
+      if (captcha !== '1234') {
+        errorMsg.textContent = 'Invalid Captcha code entered.';
+        errorMsg.classList.remove('hidden');
+        return;
+      }
+
+      errorMsg.classList.add('hidden');
+      
+      // Set session cookie
+      document.cookie = "session_id=mock_session_123; path=/; max-age=3600";
+      
+      // Redirect to purchase invoice entry page
+      window.location.href = 'purchase-invoice.html';
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output
+dist/
+**/dist/
+
+# Environment files
+.env
+**/.env
+
+# Database
+*.db
+*.db-journal
+
+# Uploads (optional if you don't want invoice images in Git)
+backend/uploads/
+
+# Logs
+logs/
+*.log

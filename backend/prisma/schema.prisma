@@ -1,0 +1,27 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Invoice {
+  id             String   @id @default(uuid())
+  supplier_name  String
+  supplier_pan   String
+  bill_number    Int
+  miti_bs        String   // Nepali date in BS (YYYY-MM-DD)
+  taxable_amount Float
+  non_taxable_amount Float @default(0.0)
+  image_path     String?  // Made optional since images won't be provided
+  status         String   // "Pending Verification", "Verified", "Rejected", "Completed", "Failed"
+  automation_error String?
+  automation_log   String?
+  automation_started_at DateTime?
+  automation_finished_at DateTime?
+  captured_at    DateTime?
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+}
