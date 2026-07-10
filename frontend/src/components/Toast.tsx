@@ -14,7 +14,7 @@ export const Toast: React.FC<ToastProps> = ({ id, message, type, onClose }) => {
   useEffect(() => {
     const timer = setTimeout(() => {
       onClose(id);
-    }, 4000);
+    }, 2500);
     return () => clearTimeout(timer);
   }, [id, onClose]);
 
@@ -57,7 +57,7 @@ interface ToastContainerProps {
 
 export const ToastContainer: React.FC<ToastContainerProps> = ({ toasts, onClose }) => {
   return (
-    <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3">
+    <div className="fixed top-6 right-6 z-[9999] flex flex-col gap-3 max-w-sm">
       {toasts.map((toast) => (
         <Toast 
           key={toast.id} 

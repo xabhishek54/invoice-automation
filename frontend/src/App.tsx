@@ -3,6 +3,7 @@ import { ThemeProvider } from './context/ThemeContext';
 import { Dashboard } from './components/Dashboard';
 import { VerificationPage } from './components/VerificationPage';
 import { ToastContainer, ToastType } from './components/Toast';
+import { playErrorSound } from './utils/audio';
 
 interface ToastMessage {
   id: string;
@@ -17,6 +18,9 @@ const App: React.FC = () => {
 
   const showToast = (message: string, type: ToastType) => {
     const id = Math.random().toString(36).substring(2, 9);
+    if (type === 'error') {
+      playErrorSound();
+    }
     setToasts((prev) => [...prev, { id, message, type }]);
   };
 

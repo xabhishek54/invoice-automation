@@ -1,5 +1,7 @@
 export type InvoiceStatus = 
   | 'Pending AI Extraction'
+  | 'AI Processing'
+  | 'AI Failed'
   | 'Pending Verification'
   | 'Verified'
   | 'Rejected'

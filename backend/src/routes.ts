@@ -167,38 +167,21 @@ router.post('/invoices', upload.single('image'), async (req: Request, res: Respo
     const hasMetadata = rawData.supplier_name && rawData.supplier_name.trim() !== '' && rawData.supplier_name !== 'New Uploaded Invoice';
     const status = hasMetadata ? 'Pending Verification' : 'Pending AI Extraction';
 
+    const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false }) + '.' + String(Date.now() % 1000).padStart(3, '0');
     // Insert into SQLite
     const invoice = await prisma.invoice.create({
       data: {
         ...sanitized,
         image_path,
         captured_at,
-        status
+        status,
+        automation_log: `[INFO] ${timestamp} - Invoice uploaded/created in database. Status: ${status}.\n`
       }
     });
 
-    // If pending extraction, notify n8n asynchronously
+    // If pending extraction, log enqueuing (AIQueueWorker will pick it up)
     if (status === 'Pending AI Extraction') {
-      const n8nExtractUrl = process.env.N8N_EXTRACT_WEBHOOK_URL;
-      if (n8nExtractUrl) {
-        const appUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
-        const imageUrl = image_path ? `${appUrl}/${image_path}` : null;
-        
-        console.log(`Forwarding uploaded invoice ${invoice.id} to n8n for extraction at: ${n8nExtractUrl}`);
-        
-        // Asynchronous POST call to n8n
-        axios.post(n8nExtractUrl, {
-          id: invoice.id,
-          image_path,
-          image_url: imageUrl
-        }).then(response => {
-          console.log(`n8n extraction trigger response code for ${invoice.id}:`, response.status);
-        }).catch(err => {
-          console.error(`Failed to forward invoice ${invoice.id} to n8n for extraction:`, err.message);
-        });
-      } else {
-        console.log(`N8N_EXTRACT_WEBHOOK_URL is not set. Invoice ${invoice.id} created but not forwarded to n8n.`);
-      }
+      console.log(`Invoice ${invoice.id} enqueued for background AI extraction.`);
     }
 
     return res.status(201).json(invoice);
@@ -286,8 +269,19 @@ router.put('/invoices/:id', async (req: Request, res: Response) => {
 
     // Auto-promote status if details are successfully extracted/updated
     let newStatus = req.body.status || existing.status;
-    if (existing.status === 'Pending AI Extraction' && sanitized.supplier_name && sanitized.supplier_name !== 'New Uploaded Invoice') {
+    const isExtractingStatus = 
+      existing.status === 'Pending AI Extraction' || 
+      existing.status === 'AI Processing' || 
+      existing.status === 'AI Failed';
+
+    if (isExtractingStatus && sanitized.supplier_name && sanitized.supplier_name !== 'New Uploaded Invoice') {
       newStatus = 'Pending Verification';
+    }
+
+    let appendLog = '';
+    if (existing.status !== newStatus) {
+      const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false }) + '.' + String(Date.now() % 1000).padStart(3, '0');
+      appendLog = `[INFO] ${timestamp} - Status updated from '${existing.status}' to '${newStatus}'.\n`;
     }
 
     // Update in database, preserve status or allow status change if passed
@@ -296,7 +290,8 @@ router.put('/invoices/:id', async (req: Request, res: Response) => {
       data: {
         ...sanitized,
         status: newStatus,
-        image_path: req.body.image_path || existing.image_path
+        image_path: req.body.image_path || existing.image_path,
+        automation_log: (existing.automation_log || '') + appendLog
       }
     });
 
@@ -304,6 +299,39 @@ router.put('/invoices/:id', async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error('Error updating invoice:', error);
     return res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+/**
+ * 4b. POST /api/invoices/:id/retry-ai - Reset status to Pending AI Extraction to retry extraction
+ */
+router.post('/invoices/:id/retry-ai', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const existing = await prisma.invoice.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Invoice not found.' });
+    }
+
+    const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false }) + '.' + String(Date.now() % 1000).padStart(3, '0');
+    const newLog = (existing.automation_log || '') + `[INFO] ${timestamp} - AI extraction retry triggered. Re-queued invoice.\n`;
+
+    // Reset status and clear error logs
+    const updated = await prisma.invoice.update({
+      where: { id },
+      data: {
+        status: 'Pending AI Extraction',
+        automation_error: null,
+        automation_log: newLog
+      }
+    });
+
+    console.log(`Re-enqueued invoice ${id} for AI extraction.`);
+    return res.json({ message: 'Invoice queued for AI extraction retry.', invoice: updated });
+  } catch (error: any) {
+    console.error('Error retrying AI extraction:', error);
+    return res.status(500).json({ error: 'Internal server error: ' + error.message });
   }
 });
 
@@ -703,7 +731,9 @@ router.get('/settings', async (req: Request, res: Response) => {
       portal_username: settingsMap['portal_username'] || '',
       portal_password: settingsMap['portal_password'] ? '••••••••' : '',
       portal_entry_url: settingsMap['portal_entry_url'] || '',
-      portal_login_url: settingsMap['portal_login_url'] || 'http://rishunew.khatacloud.com/Account/Login'
+      portal_login_url: settingsMap['portal_login_url'] || 'http://rishunew.khatacloud.com/Account/Login',
+      ai_concurrency: settingsMap['ai_concurrency'] || '2',
+      ai_rate_limit: settingsMap['ai_rate_limit'] || '15'
     };
 
     return res.json(responseSettings);
@@ -718,7 +748,7 @@ router.get('/settings', async (req: Request, res: Response) => {
  */
 router.post('/settings', async (req: Request, res: Response) => {
   try {
-    const { portal_username, portal_password, portal_entry_url, portal_login_url } = req.body;
+    const { portal_username, portal_password, portal_entry_url, portal_login_url, ai_concurrency, ai_rate_limit } = req.body;
 
     const updates: { key: string; value: string }[] = [];
 
@@ -730,6 +760,12 @@ router.post('/settings', async (req: Request, res: Response) => {
     }
     if (portal_login_url !== undefined) {
       updates.push({ key: 'portal_login_url', value: portal_login_url.trim() });
+    }
+    if (ai_concurrency !== undefined) {
+      updates.push({ key: 'ai_concurrency', value: String(ai_concurrency).trim() });
+    }
+    if (ai_rate_limit !== undefined) {
+      updates.push({ key: 'ai_rate_limit', value: String(ai_rate_limit).trim() });
     }
 
     if (portal_password !== undefined && portal_password !== '••••••••' && portal_password !== '') {

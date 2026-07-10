@@ -70,6 +70,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [submitting, setSubmitting] = useState<boolean>(false);
+  const [retryingAI, setRetryingAI] = useState<boolean>(false);
   
   // Mobile responsiveness tab
   const [activeMobileTab, setActiveMobileTab] = useState<'document' | 'form'>('document');
@@ -210,13 +211,30 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
     fetchInvoiceDetails();
   }, [currentIndex, activeInvoiceId]);
 
-  // Silent polling when automation is running
+  // Silent polling when automation or AI processing/queuing is running
   useEffect(() => {
-    if (invoice && invoice.status === 'Automation Running') {
+    const isRunning = invoice && (
+      invoice.status === 'Automation Running' ||
+      invoice.status === 'Pending AI Extraction' ||
+      invoice.status === 'AI Processing'
+    );
+    if (isRunning) {
       const interval = setInterval(() => {
         axios.get(`/api/invoices/${activeInvoiceId}`)
           .then(res => {
+            const currentInvoice = invoice;
             setInvoice(res.data);
+            // If the status changed from queuing/processing to verification (extracted details arrived), update the form fields
+            if (currentInvoice && currentInvoice.status !== res.data.status && res.data.status === 'Pending Verification') {
+              setFormData({
+                supplier_name: res.data.supplier_name,
+                supplier_pan: res.data.supplier_pan,
+                bill_number: String(res.data.bill_number),
+                miti_bs: res.data.miti_bs,
+                taxable_amount: String(res.data.taxable_amount),
+                non_taxable_amount: String(res.data.non_taxable_amount || '0')
+              });
+            }
           })
           .catch(err => console.error('Silent detail poll failed:', err));
       }, 3000);
@@ -360,6 +378,23 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
       showToast(e.response?.data?.error || 'Failed to save draft.', 'error');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // Re-enqueue invoice for AI extraction
+  const handleRetryAI = async () => {
+    if (!invoice) return;
+    try {
+      setRetryingAI(true);
+      showToast('Re-enqueuing invoice for AI extraction...', 'info');
+      await axios.post(`/api/invoices/${invoice.id}/retry-ai`);
+      showToast('Invoice successfully queued for retry!', 'success');
+      await fetchInvoiceDetails();
+    } catch (err: any) {
+      console.error(err);
+      showToast(err.response?.data?.error || 'Failed to retry AI extraction.', 'error');
+    } finally {
+      setRetryingAI(false);
     }
   };
 
@@ -856,6 +891,10 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
               <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${
                 invoice.status === 'Pending AI Extraction'
                   ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400'
+                  : invoice.status === 'AI Processing'
+                  ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400'
+                  : invoice.status === 'AI Failed'
+                  ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
                   : invoice.status === 'Pending Verification' 
                   ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' 
                   : invoice.status === 'Verified'
@@ -868,7 +907,11 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
               }`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${
                   invoice.status === 'Pending AI Extraction' 
-                    ? 'bg-purple-500 animate-pulse' 
+                    ? 'bg-purple-400'
+                    : invoice.status === 'AI Processing'
+                    ? 'bg-indigo-500 animate-pulse'
+                    : invoice.status === 'AI Failed'
+                    ? 'bg-rose-500'
                     : invoice.status === 'Pending Verification' 
                     ? 'bg-amber-500' 
                     : invoice.status === 'Verified'
@@ -880,7 +923,11 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                     : 'bg-rose-500'
                 }`}></span>
                 {invoice.status === 'Pending AI Extraction' 
-                  ? 'AI Processing' 
+                  ? 'AI Queued' 
+                  : invoice.status === 'AI Processing'
+                  ? 'AI Extracting'
+                  : invoice.status === 'AI Failed'
+                  ? 'AI Failed'
                   : invoice.status === 'Automation Running'
                   ? 'ERP Syncing'
                   : invoice.status === 'Completed'
@@ -895,8 +942,48 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
               <div className="flex items-center gap-3 p-4 bg-purple-500/10 border border-purple-500/20 rounded-2xl text-xs text-purple-600 dark:text-purple-400 font-semibold mb-6">
                 <Loader2 className="w-4 h-4 animate-spin text-purple-500 flex-shrink-0" />
                 <span>
+                  <strong>AI Extraction Queued:</strong> This invoice is waiting in the queue to be processed. Gemini will extract details once n8n receives the invoice. Feel free to wait or enter the fields manually below.
+                </span>
+              </div>
+            )}
+
+            {invoice.status === 'AI Processing' && (
+              <div className="flex items-center gap-3 p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl text-xs text-indigo-600 dark:text-indigo-400 font-semibold mb-6">
+                <Loader2 className="w-4 h-4 animate-spin text-indigo-500 flex-shrink-0" />
+                <span>
                   <strong>AI Extraction in Progress:</strong> n8n is currently extracting details from this invoice using Gemini. Feel free to wait or enter the fields manually below.
                 </span>
+              </div>
+            )}
+
+            {invoice.status === 'AI Failed' && (
+              <div className="flex flex-col gap-2.5 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-xs text-rose-600 dark:text-rose-400 font-semibold mb-6">
+                <div className="flex items-center gap-3">
+                  <AlertCircle className="w-4.5 h-4.5 text-rose-500 flex-shrink-0" />
+                  <span>
+                    <strong>AI Extraction Failed:</strong> n8n was unable to extract details from this invoice.
+                  </span>
+                </div>
+                {invoice.automation_error && (
+                  <p className="mt-0.5 opacity-90 font-mono text-[10px] bg-white/50 dark:bg-slate-900/50 p-2 rounded-lg border border-rose-500/10">
+                    Error: {invoice.automation_error}
+                  </p>
+                )}
+                <div className="mt-1 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRetryAI}
+                    disabled={retryingAI}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-[10px] transition-all disabled:opacity-50 active:scale-95 shadow-sm"
+                  >
+                    {retryingAI ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    )}
+                    Retry AI Extraction
+                  </button>
+                </div>
               </div>
             )}
 
@@ -964,6 +1051,39 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
               </div>
             )}
 
+            {/* Missing or Placeholder Warnings */}
+            {(formData.supplier_pan === '000000000' || 
+              !formData.supplier_name || 
+              formData.supplier_name.trim() === '' || 
+              formData.supplier_name === 'New Uploaded Invoice' || 
+              !formData.bill_number || 
+              Number(formData.bill_number) === 0 || 
+              (Number(formData.taxable_amount) === 0 && Number(formData.non_taxable_amount) === 0)) && (
+              <div className="flex items-start gap-3 p-4.5 bg-rose-500/10 dark:bg-rose-950/20 border-l-4 border-rose-500 border-t border-r border-b border-rose-500/20 rounded-2xl text-xs text-rose-600 dark:text-rose-400 mb-6 shadow-sm">
+                <AlertCircle className="w-5 h-5 text-rose-500 flex-shrink-0 animate-pulse" />
+                <div>
+                  <h4 className="font-extrabold uppercase tracking-wider text-[10px] text-rose-700 dark:text-rose-300">Missing or Default Values Detected</h4>
+                  <p className="mt-0.5 font-semibold leading-relaxed">
+                    Some invoice fields contain missing, empty, or default values:
+                  </p>
+                  <ul className="list-disc list-inside mt-1.5 space-y-1 font-medium opacity-90">
+                    {formData.supplier_pan === '000000000' && (
+                      <li>PAN number is the default placeholder (000000000). Please verify and enter the correct PAN.</li>
+                    )}
+                    {(!formData.supplier_name || formData.supplier_name.trim() === '' || formData.supplier_name === 'New Uploaded Invoice') && (
+                      <li>Supplier Name is missing or default placeholder.</li>
+                    )}
+                    {(!formData.bill_number || Number(formData.bill_number) === 0) && (
+                      <li>Bill Number is missing or zero.</li>
+                    )}
+                    {(Number(formData.taxable_amount) === 0 && Number(formData.non_taxable_amount) === 0) && (
+                      <li>Both Taxable and Non-Taxable amounts are zero. At least one must be provided.</li>
+                    )}
+                  </ul>
+                </div>
+              </div>
+            )}
+
             {Number(formData.non_taxable_amount) > 0 && (
               <div className="flex items-start gap-3 p-4.5 bg-cyan-500/10 dark:bg-cyan-950/20 border border-cyan-500/20 dark:border-cyan-800/30 rounded-2xl text-xs text-cyan-600 dark:text-cyan-400 mb-6 shadow-sm">
                 <Sparkles className="w-5 h-5 text-cyan-500 flex-shrink-0 animate-pulse" />
@@ -1007,7 +1127,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                         type="text" 
                         value={formData[field.key]} 
                         onChange={(e) => handleInputChange(field.key, e.target.value)}
-                        disabled={submitting || invoice.status === 'Completed' || invoice.status === 'Automation Running'}
+                        disabled={submitting || invoice.status === 'Completed' || invoice.status === 'Automation Running' || invoice.status === 'Pending AI Extraction' || invoice.status === 'AI Processing'}
                         className={`w-full px-4.5 py-3 bg-slate-50/50 dark:bg-slate-950/50 hover:bg-slate-100/30 focus:bg-white dark:focus:bg-slate-950 rounded-xl border text-sm font-bold transition-all focus:outline-none ${
                           isMonospace ? 'font-mono' : ''
                         } ${
@@ -1015,10 +1135,17 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                         } ${
                           isAmountField ? 'pl-12 text-lg text-indigo-600 dark:text-indigo-400' : ''
                         } ${
-                          error ? 'border-rose-500' : 
-                          (field.key === 'non_taxable_amount' && Number(formData.non_taxable_amount) > 0)
-                            ? 'border-cyan-500/80 dark:border-cyan-400/80 ring-2 ring-cyan-500/10 dark:ring-cyan-400/10 bg-cyan-500/[0.01] focus:border-cyan-500 dark:focus:border-cyan-400'
-                            : 'border-slate-200/80 dark:border-slate-800/80 focus:border-brand/40 dark:focus:border-brand/40'
+                          error ? 'border-rose-500 focus:border-rose-600 ring-rose-500/10' : 
+                          // Red border highlighting for invalid/default fields
+                          (field.key === 'supplier_pan' && formData.supplier_pan === '000000000')
+                            ? 'border-rose-500/80 dark:border-rose-500/80 ring-2 ring-rose-500/10 dark:ring-rose-500/10 bg-rose-500/[0.01] focus:border-rose-500 dark:focus:border-rose-500'
+                            : (field.key === 'supplier_name' && (!formData.supplier_name || formData.supplier_name.trim() === '' || formData.supplier_name === 'New Uploaded Invoice'))
+                              ? 'border-rose-500/80 dark:border-rose-500/80 ring-2 ring-rose-500/10 dark:ring-rose-500/10 bg-rose-500/[0.01] focus:border-rose-500 dark:focus:border-rose-500'
+                              : (field.key === 'bill_number' && (!formData.bill_number || Number(formData.bill_number) === 0))
+                                ? 'border-rose-500/80 dark:border-rose-500/80 ring-2 ring-rose-500/10 dark:ring-rose-500/10 bg-rose-500/[0.01] focus:border-rose-500 dark:focus:border-rose-500'
+                                : (field.key === 'non_taxable_amount' && Number(formData.non_taxable_amount) > 0)
+                                  ? 'border-cyan-500/80 dark:border-cyan-400/80 ring-2 ring-cyan-500/10 dark:ring-cyan-400/10 bg-cyan-500/[0.01] focus:border-cyan-500 dark:focus:border-cyan-400'
+                                  : 'border-slate-200/80 dark:border-slate-800/80 focus:border-brand/40 dark:focus:border-brand/40'
                         }`}
                         placeholder={field.placeholder}
                       />
@@ -1059,7 +1186,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
               <button 
                 type="button" 
                 onClick={handleSaveDraft}
-                disabled={submitting || invoice.status === 'Completed' || invoice.status === 'Automation Running'}
+                disabled={submitting || invoice.status === 'Completed' || invoice.status === 'Automation Running' || invoice.status === 'Pending AI Extraction' || invoice.status === 'AI Processing'}
                 className="flex items-center justify-center gap-2 py-3 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-bold hover:bg-slate-100 dark:hover:bg-slate-800/50 focus:outline-none transition-all disabled:opacity-50 active:scale-98 text-xs"
               >
                 <Save className="w-3.5 h-3.5" /> Save Draft
@@ -1069,7 +1196,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
               <button 
                 type="button" 
                 onClick={handleReject}
-                disabled={submitting || invoice.status === 'Completed' || invoice.status === 'Automation Running'}
+                disabled={submitting || invoice.status === 'Completed' || invoice.status === 'Automation Running' || invoice.status === 'Pending AI Extraction' || invoice.status === 'AI Processing'}
                 className="flex items-center justify-center gap-2 py-3 rounded-xl border border-rose-500/20 text-rose-600 bg-rose-50/20 hover:bg-rose-100/30 dark:text-rose-400 dark:bg-rose-950/20 dark:hover:bg-rose-900/30 font-bold focus:outline-none transition-all disabled:opacity-50 active:scale-98 text-xs"
               >
                 <XCircle className="w-3.5 h-3.5" /> Reject Invoice
@@ -1077,15 +1204,15 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
             </div>
 
             {/* Action Trigger Button */}
-            {invoice.status === 'Pending AI Extraction' ? (
+            {invoice.status === 'Pending AI Extraction' || invoice.status === 'AI Processing' ? (
               <button 
                 type="button" 
                 disabled={true}
                 className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-purple-500/20 text-purple-400 font-bold focus:outline-none transition-all disabled:opacity-70 text-xs tracking-wide uppercase"
               >
-                <Loader2 className="w-4 h-4 animate-spin" /> AI Processing...
+                <Loader2 className="w-4 h-4 animate-spin" /> {invoice.status === 'Pending AI Extraction' ? 'AI Queued...' : 'AI Processing...'}
               </button>
-            ) : invoice.status === 'Pending Verification' ? (
+            ) : invoice.status === 'Pending Verification' || invoice.status === 'AI Failed' ? (
               <button 
                 type="button" 
                 onClick={handleConfirm}

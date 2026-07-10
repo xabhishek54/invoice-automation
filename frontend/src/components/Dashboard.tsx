@@ -16,14 +16,15 @@ import {
   Check,
   Terminal,
   Play,
-  Calendar,
   AlertTriangle,
   X,
   Settings,
-  Save
+  Save,
+  Loader2
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { ToastType } from './Toast';
+import { playErrorSound, playSuccessSound } from '../utils/audio';
 
 export interface Invoice {
   id: string;
@@ -52,12 +53,15 @@ interface DashboardProps {
 export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast }) => {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const activeSyncIdsRef = useRef<string[]>([]);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [stopOnError, setStopOnError] = useState<boolean>(true);
   const [entryUrl, setEntryUrl] = useState<string>('');
   const [portalUsername, setPortalUsername] = useState<string>('');
   const [portalPassword, setPortalPassword] = useState<string>('');
+  const [aiConcurrency, setAiConcurrency] = useState<string>('2');
+  const [aiRateLimit, setAiRateLimit] = useState<string>('15');
   const [savingSettings, setSavingSettings] = useState<boolean>(false);
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const { theme, toggleTheme } = useTheme();
@@ -153,7 +157,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
       showToast('Confirming and verifying invoice...', 'info');
       await axios.post('/api/confirm', invoice);
       showToast('Invoice confirmed and verified. Ready for ERP sync!', 'success');
-      fetchInvoices();
+      fetchInvoices(true);
     } catch (err: any) {
       console.error(err);
       const errMsg = err.response?.data?.error || 'Failed to verify invoice.';
@@ -163,12 +167,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
 
   const handleStartAutomation = async (ids: string[]) => {
     try {
+      activeSyncIdsRef.current = ids;
       showToast(`Triggering ERP sync for ${ids.length} invoice(s)...`, 'info');
       const res = await axios.post('/api/automation/start', { invoiceIds: ids, stopOnError, entryUrl });
       showToast(res.data.message || 'ERP sync started successfully.', 'success');
-      fetchInvoices();
+      fetchInvoices(true);
     } catch (err: any) {
       console.error(err);
+      activeSyncIdsRef.current = [];
       const errMsg = err.response?.data?.error || 'Failed to start ERP sync.';
       showToast(errMsg, 'error');
     }
@@ -197,7 +203,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
       const res = await axios.post('/api/confirm', { ids: selectedIds });
       showToast(res.data.message || `Successfully verified ${selectedIds.length} invoice(s)!`, 'success');
       setSelectedIds([]);
-      fetchInvoices();
+      fetchInvoices(true);
     } catch (err: any) {
       console.error(err);
       const errMsg = err.response?.data?.error || 'Failed to verify selected invoices.';
@@ -218,7 +224,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
       const res = await axios.post('/api/automation/start', { invoiceIds: syncableIds, stopOnError, entryUrl });
       showToast(res.data.message || 'ERP sync started successfully.', 'success');
       setSelectedIds([]);
-      fetchInvoices();
+      fetchInvoices(true);
     } catch (err: any) {
       console.error(err);
       const errMsg = err.response?.data?.error || 'Failed to start ERP sync.';
@@ -235,7 +241,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
       const res = await axios.post('/api/reject', { ids: selectedIds });
       showToast(res.data.message || `Successfully rejected ${selectedIds.length} invoice(s)!`, 'success');
       setSelectedIds([]);
-      fetchInvoices();
+      fetchInvoices(true);
     } catch (err: any) {
       console.error(err);
       const errMsg = err.response?.data?.error || 'Failed to reject selected invoices.';
@@ -243,23 +249,66 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
     }
   };
 
-  const fetchInvoices = async () => {
+  const updateInvoicesState = (newInvoices: Invoice[]) => {
+    // 1. Check if any invoice transitioned from 'Automation Running' to 'Failed'
+    const anyNewSyncFailed = newInvoices.some(newInv => {
+      const oldInv = invoices.find(i => i.id === newInv.id);
+      return oldInv && oldInv.status === 'Automation Running' && newInv.status === 'Failed';
+    });
+
+    if (anyNewSyncFailed) {
+      playErrorSound();
+    }
+
+    // 2. Check active sync batch completion
+    if (activeSyncIdsRef.current.length > 0) {
+      const runningInBatch = newInvoices.filter(newInv => 
+        activeSyncIdsRef.current.includes(newInv.id) && 
+        newInv.status === 'Automation Running'
+      );
+
+      if (runningInBatch.length === 0) {
+        // Entire batch has finished running!
+        const batchInvoices = newInvoices.filter(newInv => activeSyncIdsRef.current.includes(newInv.id));
+        const anyFailed = batchInvoices.some(i => i.status === 'Failed' || i.status === 'Rejected');
+        
+        if (activeSyncIdsRef.current.length > 1) {
+          // It was a batch sync!
+          if (anyFailed) {
+            playErrorSound();
+          } else {
+            playSuccessSound();
+          }
+        } else {
+          // It was a single sync!
+          if (anyFailed) {
+            playErrorSound();
+          }
+        }
+        activeSyncIdsRef.current = [];
+      }
+    }
+
+    setInvoices(newInvoices);
+  };
+
+  const fetchInvoices = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const res = await axios.get('/api/invoices');
-      setInvoices(res.data);
+      updateInvoicesState(res.data);
     } catch (e: any) {
       console.error(e);
       showToast('Failed to fetch invoices from database.', 'error');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   const refreshInvoices = async () => {
     try {
       const res = await axios.get('/api/invoices');
-      setInvoices(res.data);
+      updateInvoicesState(res.data);
       // Keep logs up to date if currently open in drawer
       if (logInvoice) {
         const updatedLogInv = res.data.find((i: Invoice) => i.id === logInvoice.id);
@@ -278,6 +327,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
       setPortalUsername(res.data.portal_username || '');
       setPortalPassword(res.data.portal_password || '');
       setEntryUrl(res.data.portal_entry_url || '');
+      setAiConcurrency(res.data.ai_concurrency || '2');
+      setAiRateLimit(res.data.ai_rate_limit || '15');
     } catch (e: any) {
       console.error('Failed to load settings:', e);
       showToast('Failed to load settings from server.', 'error');
@@ -290,7 +341,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
       await axios.post('/api/settings', {
         portal_username: portalUsername,
         portal_password: portalPassword,
-        portal_entry_url: entryUrl
+        portal_entry_url: entryUrl,
+        ai_concurrency: Number(aiConcurrency) || 2,
+        ai_rate_limit: Number(aiRateLimit) || 15
       });
       showToast('Settings saved successfully.', 'success');
       await fetchSettings();
@@ -307,9 +360,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
     fetchSettings();
   }, []);
 
-  // Poll server if any automation is running
+  // Poll server if any automation or AI processing/queuing is running
   useEffect(() => {
-    const isRunning = invoices.some(i => i.status === 'Automation Running');
+    const isRunning = invoices.some(
+      i => i.status === 'Automation Running' || 
+           i.status === 'Pending AI Extraction' || 
+           i.status === 'AI Processing'
+    );
     if (isRunning) {
       const interval = setInterval(() => {
         refreshInvoices();
@@ -319,7 +376,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
   }, [invoices, logInvoice]);
 
   // Compute counts
-  const aiProcessingCount = invoices.filter(i => i.status === 'Pending AI Extraction').length;
+  const aiProcessingCount = invoices.filter(
+    i => i.status === 'Pending AI Extraction' || 
+         i.status === 'AI Processing' || 
+         i.status === 'AI Failed'
+  ).length;
   const pendingCount = invoices.filter(i => i.status === 'Pending Verification').length;
   const verifiedCount = invoices.filter(i => i.status === 'Verified').length;
   const erpSyncedCount = invoices.filter(i => i.status === 'Completed').length;
@@ -328,7 +389,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
 
   // Filtered invoices
   const filteredInvoices = invoices.filter(invoice => {
-    const matchesStatus = statusFilter === 'All' || invoice.status === statusFilter;
+    let matchesStatus = false;
+    if (statusFilter === 'All') {
+      matchesStatus = true;
+    } else if (statusFilter === 'Pending AI Extraction') {
+      matchesStatus = 
+        invoice.status === 'Pending AI Extraction' || 
+        invoice.status === 'AI Processing' || 
+        invoice.status === 'AI Failed';
+    } else {
+      matchesStatus = invoice.status === statusFilter;
+    }
+
     const matchesSearch =
       invoice.supplier_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       invoice.supplier_pan.includes(searchTerm) ||
@@ -354,17 +426,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
     }
   };
 
-  const getDuration = (startStr: string | null | undefined, finishStr: string | null | undefined) => {
-    if (!startStr || !finishStr) return null;
-    try {
-      const start = new Date(startStr).getTime();
-      const finish = new Date(finishStr).getTime();
-      const diffSec = Math.round((finish - start) / 1000);
-      if (diffSec < 60) return `${diffSec}s`;
-      return `${Math.floor(diffSec / 60)}m ${diffSec % 60}s`;
-    } catch (e) {
-      return null;
-    }
+  const isInvalidOrDefault = (invoice: Invoice) => {
+    return invoice.supplier_pan === '000000000' || 
+           !invoice.supplier_name || 
+           invoice.supplier_name.trim() === '' || 
+           invoice.supplier_name === 'New Uploaded Invoice' || 
+           !invoice.bill_number || 
+           Number(invoice.bill_number) === 0 || 
+           (Number(invoice.taxable_amount) === 0 && Number(invoice.non_taxable_amount) === 0);
   };
 
   const verifiedInvoicesToSync = invoices.filter(i => i.status === 'Verified');
@@ -437,7 +506,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
           <div className="w-px h-6 bg-slate-200 dark:bg-slate-800 mx-1"></div>
 
           <button
-            onClick={fetchInvoices}
+            onClick={() => fetchInvoices()}
             className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-all active:scale-95"
             title="Refresh Invoices"
           >
@@ -504,7 +573,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
               </div>
 
               {/* Setting 3: Purchase Entry URL */}
-              <div className="flex flex-col gap-1.5">
+              <div className="flex flex-col gap-1.5 md:col-span-2">
                 <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   Khatacloud Purchase Entry URL
                 </label>
@@ -517,8 +586,40 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
                 />
               </div>
 
-              {/* Setting 4: Stop on Error & Save Button */}
-              <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-4">
+              {/* Setting 4: AI Queue Concurrency */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  AI Extraction Concurrency (Active Queue Limit)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={aiConcurrency}
+                  onChange={(e) => setAiConcurrency(e.target.value)}
+                  placeholder="2"
+                  className="w-full text-xs font-medium px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent dark:text-slate-100"
+                />
+              </div>
+
+              {/* Setting 5: AI Rate Limit */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Gemini API Rate Limit (Requests per minute)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="60"
+                  value={aiRateLimit}
+                  onChange={(e) => setAiRateLimit(e.target.value)}
+                  placeholder="15"
+                  className="w-full text-xs font-medium px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand focus:border-transparent dark:text-slate-100"
+                />
+              </div>
+
+              {/* Setting 6: Stop on Error & Save Button */}
+              <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-4 md:col-span-2 border-t border-slate-200/50 dark:border-slate-800/50 pt-5 mt-2">
                 <label className="flex items-center gap-3 cursor-pointer bg-slate-50 hover:bg-slate-100 dark:bg-slate-950 dark:hover:bg-slate-900/50 px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 select-none transition-all w-fit h-[42px]">
                   <input
                     type="checkbox"
@@ -750,9 +851,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
                       className={`group cursor-pointer hover:bg-slate-100/50 dark:hover:bg-slate-950/30 transition-colors ${
                         selectedIds.includes(invoice.id)
                           ? 'bg-brand/5 dark:bg-brand/10'
-                          : invoice.non_taxable_amount !== undefined && invoice.non_taxable_amount > 0
-                            ? 'bg-cyan-500/[0.02] dark:bg-cyan-500/[0.01]'
-                            : ''
+                          : isInvalidOrDefault(invoice)
+                            ? 'bg-rose-500/[0.02] dark:bg-rose-500/[0.01]'
+                            : invoice.non_taxable_amount !== undefined && invoice.non_taxable_amount > 0
+                              ? 'bg-cyan-500/[0.02] dark:bg-cyan-500/[0.01]'
+                              : ''
                       }`}
                     >
                       <td className="py-4 px-6 text-center" onClick={(e) => e.stopPropagation()}>
@@ -764,12 +867,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
                         />
                       </td>
                       <td className={`py-4 px-6 font-semibold text-slate-800 dark:text-slate-200 ${
-                        invoice.non_taxable_amount !== undefined && invoice.non_taxable_amount > 0
-                          ? 'border-l-4 border-cyan-500 dark:border-l-4 dark:border-cyan-400'
-                          : ''
+                        isInvalidOrDefault(invoice)
+                          ? 'border-l-4 border-rose-500 dark:border-l-4 dark:border-rose-500'
+                          : invoice.non_taxable_amount !== undefined && invoice.non_taxable_amount > 0
+                            ? 'border-l-4 border-cyan-500 dark:border-l-4 dark:border-cyan-400'
+                            : ''
                       }`}>
                         <div className="flex items-center gap-2">
                           <span>{invoice.supplier_name}</span>
+                          {isInvalidOrDefault(invoice) && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-400 border border-rose-200/50 dark:border-rose-800/30 animate-pulse tracking-wider">
+                              Missing / Placeholder
+                            </span>
+                          )}
                           {invoice.non_taxable_amount !== undefined && invoice.non_taxable_amount > 0 && (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase bg-cyan-100 text-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-400 border border-cyan-200/50 dark:border-cyan-800/30 animate-pulse tracking-wider">
                               Non-Taxable
@@ -817,39 +927,53 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
                         )}
                       </td>
                       <td className="py-4 px-6">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${invoice.status === 'Pending AI Extraction'
-                            ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400'
-                            : invoice.status === 'Pending Verification'
-                              ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                              : invoice.status === 'Verified'
-                                ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400'
-                                : invoice.status === 'Automation Running'
-                                  ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400'
-                                  : invoice.status === 'Completed'
-                                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                                    : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
-                          }`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${invoice.status === 'Pending AI Extraction'
-                              ? 'bg-purple-500 animate-pulse'
-                              : invoice.status === 'Pending Verification'
-                                ? 'bg-amber-500'
-                                : invoice.status === 'Verified'
-                                  ? 'bg-blue-500'
-                                  : invoice.status === 'Automation Running'
-                                    ? 'bg-indigo-500 animate-spin border-t-transparent border-2'
-                                    : invoice.status === 'Completed'
-                                      ? 'bg-emerald-500'
-                                      : 'bg-rose-500'
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${
+                            invoice.status === 'Pending AI Extraction'
+                              ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400'
+                              : invoice.status === 'AI Processing'
+                                ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400'
+                                : invoice.status === 'AI Failed'
+                                  ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
+                                  : invoice.status === 'Pending Verification'
+                                    ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                                    : invoice.status === 'Verified'
+                                      ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400'
+                                      : invoice.status === 'Automation Running'
+                                        ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400'
+                                        : invoice.status === 'Completed'
+                                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                                          : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
+                           }`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${
+                              invoice.status === 'Pending AI Extraction'
+                                ? 'bg-purple-400'
+                                : invoice.status === 'AI Processing'
+                                  ? 'bg-indigo-500 animate-pulse'
+                                  : invoice.status === 'AI Failed'
+                                    ? 'bg-rose-500'
+                                    : invoice.status === 'Pending Verification'
+                                      ? 'bg-amber-500'
+                                      : invoice.status === 'Verified'
+                                        ? 'bg-blue-500'
+                                        : invoice.status === 'Automation Running'
+                                          ? 'bg-indigo-500 animate-spin border-t-transparent border-2'
+                                          : invoice.status === 'Completed'
+                                            ? 'bg-emerald-500'
+                                            : 'bg-rose-500'
                             }`}></span>
                           {invoice.status === 'Pending AI Extraction'
-                            ? 'AI Processing'
-                            : invoice.status === 'Automation Running'
-                              ? 'ERP Syncing'
-                              : invoice.status === 'Completed'
-                                ? 'ERP Synced'
-                                : invoice.status === 'Failed'
-                                  ? 'ERP Failed'
-                                  : invoice.status}
+                            ? 'AI Queued'
+                            : invoice.status === 'AI Processing'
+                              ? 'AI Extracting'
+                              : invoice.status === 'AI Failed'
+                                ? 'AI Failed'
+                                : invoice.status === 'Automation Running'
+                                  ? 'ERP Syncing'
+                                  : invoice.status === 'Completed'
+                                    ? 'ERP Synced'
+                                    : invoice.status === 'Failed'
+                                      ? 'ERP Failed'
+                                      : invoice.status}
                         </span>
                       </td>
                       <td className="py-4 px-6 text-center">
@@ -942,45 +1066,216 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectInvoice, showToast
 
             {/* Drawer Content */}
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              {/* Status and Metadata Card */}
-              <div className="grid grid-cols-2 gap-4 p-5 bg-slate-950/50 rounded-2xl border border-slate-800/80">
-                <div>
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">ERP Sync Status</p>
-                  <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold mt-1.5 ${logInvoice.status === 'Completed'
-                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                      : logInvoice.status === 'Automation Running'
-                        ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 animate-pulse'
-                        : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                    }`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${logInvoice.status === 'Completed'
-                        ? 'bg-emerald-400'
-                        : logInvoice.status === 'Automation Running'
-                          ? 'bg-indigo-400 animate-pulse'
-                          : 'bg-rose-400'
-                      }`}></span>
-                    {logInvoice.status === 'Automation Running' ? 'ERP Syncing' : logInvoice.status === 'Completed' ? 'ERP Synced' : 'ERP Failed'}
-                  </span>
+              {/* Stepper Timeline */}
+              <div className="p-5 bg-slate-950/40 border border-slate-800 rounded-2xl space-y-4">
+                <h4 className="text-[10px] font-extrabold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-2 flex items-center gap-2">
+                  <Terminal className="w-3.5 h-3.5" />
+                  <span>Invoice Processing Timeline</span>
+                </h4>
+                <div className="relative flex flex-col gap-6 pl-6 border-l border-slate-800">
+                  {/* Step 1: Uploaded */}
+                  <div className="relative">
+                    <span className="absolute -left-[30px] top-0 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-emerald-500 text-slate-950 font-extrabold text-[10px]">
+                      ✓
+                    </span>
+                    <div>
+                      <h5 className="text-xs font-bold text-slate-200">Invoice Uploaded</h5>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Uploaded on {formatDate(logInvoice.created_at)}</p>
+                    </div>
+                  </div>
+
+                  {/* Step 2: AI Extraction */}
+                  <div className="relative">
+                    {(() => {
+                      const isQueued = logInvoice.status === 'Pending AI Extraction';
+                      const isProcessing = logInvoice.status === 'AI Processing';
+                      const isFailed = logInvoice.status === 'AI Failed';
+                      const isCompleted = !isQueued && !isProcessing && !isFailed;
+
+                      if (isCompleted) {
+                        return (
+                          <>
+                            <span className="absolute -left-[30px] top-0 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-emerald-500 text-slate-950 font-extrabold text-[10px]">✓</span>
+                            <div>
+                              <h5 className="text-xs font-bold text-slate-200">AI Extraction</h5>
+                              <p className="text-[10px] text-emerald-400 font-semibold mt-0.5">Success • Details extracted by Gemini</p>
+                            </div>
+                          </>
+                        );
+                      } else if (isFailed) {
+                        return (
+                          <>
+                            <span className="absolute -left-[30px] top-0 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-rose-500 text-white font-extrabold text-[10px]">✗</span>
+                            <div>
+                              <h5 className="text-xs font-bold text-rose-400">AI Extraction</h5>
+                              <p className="text-[10px] text-rose-500 font-semibold mt-0.5">Failed • n8n extraction failed</p>
+                            </div>
+                          </>
+                        );
+                      } else if (isProcessing) {
+                        return (
+                          <>
+                            <span className="absolute -left-[30px] top-0 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-indigo-500 text-white animate-pulse text-[10px]">⚙</span>
+                            <div>
+                              <h5 className="text-xs font-bold text-indigo-400">AI Extraction</h5>
+                              <p className="text-[10px] text-indigo-300 font-semibold mt-0.5 flex items-center gap-1">
+                                <Loader2 className="w-2.5 h-2.5 animate-spin" /> In Progress • Extracting fields...
+                              </p>
+                            </div>
+                          </>
+                        );
+                      } else {
+                        return (
+                          <>
+                            <span className="absolute -left-[30px] top-0 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-purple-500 text-white animate-pulse text-[10px]">⏱</span>
+                            <div>
+                              <h5 className="text-xs font-bold text-purple-400">AI Extraction</h5>
+                              <p className="text-[10px] text-purple-300 font-semibold mt-0.5">Queued • Waiting for queue slot</p>
+                            </div>
+                          </>
+                        );
+                      }
+                    })()}
+                  </div>
+
+                  {/* Step 3: Human Verification */}
+                  <div className="relative">
+                    {(() => {
+                      const isAiActive = logInvoice.status === 'Pending AI Extraction' || logInvoice.status === 'AI Processing' || logInvoice.status === 'AI Failed';
+                      const isPendingVerify = logInvoice.status === 'Pending Verification';
+                      const isRejected = logInvoice.status === 'Rejected';
+
+                      if (isAiActive) {
+                        return (
+                          <>
+                            <span className="absolute -left-[30px] top-0 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-slate-800 text-slate-500 text-[10px]">•</span>
+                            <div>
+                              <h5 className="text-xs font-bold text-slate-500">Human Verification</h5>
+                              <p className="text-[10px] text-slate-600 mt-0.5">Waiting for AI extraction to complete</p>
+                            </div>
+                          </>
+                        );
+                      } else if (isPendingVerify) {
+                        return (
+                          <>
+                            <span className="absolute -left-[30px] top-0 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-amber-500 text-slate-950 font-extrabold text-[10px]">!</span>
+                            <div>
+                              <h5 className="text-xs font-bold text-amber-400">Human Verification</h5>
+                              <p className="text-[10px] text-amber-500 font-semibold mt-0.5">Action Required • Review fields in verification panel</p>
+                            </div>
+                          </>
+                        );
+                      } else if (isRejected) {
+                        return (
+                          <>
+                            <span className="absolute -left-[30px] top-0 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-rose-500 text-white font-extrabold text-[10px]">✗</span>
+                            <div>
+                              <h5 className="text-xs font-bold text-rose-400">Human Verification</h5>
+                              <p className="text-[10px] text-rose-500 font-semibold mt-0.5">Rejected • Invoice rejected by user</p>
+                            </div>
+                          </>
+                        );
+                      } else {
+                        return (
+                          <>
+                            <span className="absolute -left-[30px] top-0 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-emerald-500 text-slate-950 font-extrabold text-[10px]">✓</span>
+                            <div>
+                              <h5 className="text-xs font-bold text-slate-200">Human Verification</h5>
+                              <p className="text-[10px] text-emerald-400 font-semibold mt-0.5">Success • Details confirmed and verified</p>
+                            </div>
+                          </>
+                        );
+                      }
+                    })()}
+                  </div>
+
+                  {/* Step 4: ERP Sync */}
+                  <div className="relative">
+                    {(() => {
+                      const isBeforeVerify = logInvoice.status === 'Pending AI Extraction' || logInvoice.status === 'AI Processing' || logInvoice.status === 'AI Failed' || logInvoice.status === 'Pending Verification';
+                      const isRejected = logInvoice.status === 'Rejected';
+                      const isReady = logInvoice.status === 'Verified';
+                      const isSyncing = logInvoice.status === 'Automation Running';
+                      const isFailed = logInvoice.status === 'Failed';
+
+                      if (isBeforeVerify) {
+                        return (
+                          <>
+                            <span className="absolute -left-[30px] top-0 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-slate-800 text-slate-500 text-[10px]">•</span>
+                            <div>
+                              <h5 className="text-xs font-bold text-slate-500">ERP Portal Sync</h5>
+                              <p className="text-[10px] text-slate-600 mt-0.5">Waiting for human verification</p>
+                            </div>
+                          </>
+                        );
+                      } else if (isRejected) {
+                        return (
+                          <>
+                            <span className="absolute -left-[30px] top-0 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-slate-800 text-slate-500 text-[10px]">•</span>
+                            <div>
+                              <h5 className="text-xs font-bold text-slate-500">ERP Portal Sync</h5>
+                              <p className="text-[10px] text-slate-600 mt-0.5">N/A • Invoice was rejected</p>
+                            </div>
+                          </>
+                        );
+                      } else if (isReady) {
+                        return (
+                          <>
+                            <span className="absolute -left-[30px] top-0 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-blue-500 text-white text-[10px]">▶</span>
+                            <div>
+                              <h5 className="text-xs font-bold text-blue-400">ERP Portal Sync</h5>
+                              <p className="text-[10px] text-blue-550 dark:text-blue-400 font-semibold mt-0.5">Ready to Sync • Click play to launch browser automation</p>
+                            </div>
+                          </>
+                        );
+                      } else if (isSyncing) {
+                        return (
+                          <>
+                            <span className="absolute -left-[30px] top-0 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-indigo-500 text-white animate-pulse text-[10px]">⚙</span>
+                            <div>
+                              <h5 className="text-xs font-bold text-indigo-400">ERP Portal Sync</h5>
+                              <p className="text-[10px] text-indigo-300 font-semibold mt-0.5 flex items-center gap-1">
+                                <Loader2 className="w-2.5 h-2.5 animate-spin" /> In Progress • Syncing in browser...
+                              </p>
+                            </div>
+                          </>
+                        );
+                      } else if (isFailed) {
+                        return (
+                          <>
+                            <span className="absolute -left-[30px] top-0 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-rose-500 text-white font-extrabold text-[10px]">✗</span>
+                            <div>
+                              <h5 className="text-xs font-bold text-rose-400">ERP Portal Sync</h5>
+                              <p className="text-[10px] text-rose-500 font-semibold mt-0.5">Failed • Sync automation encountered errors</p>
+                            </div>
+                          </>
+                        );
+                      } else {
+                        return (
+                          <>
+                            <span className="absolute -left-[30px] top-0 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-emerald-500 text-slate-950 font-extrabold text-[10px]">✓</span>
+                            <div>
+                              <h5 className="text-xs font-bold text-slate-200">ERP Portal Sync</h5>
+                              <p className="text-[10px] text-emerald-400 font-semibold mt-0.5">Success • Details synced to Khatacloud portal</p>
+                            </div>
+                          </>
+                        );
+                      }
+                    })()}
+                  </div>
                 </div>
-                <div>
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Execution Duration</p>
-                  <p className="text-sm font-semibold text-white font-mono mt-1.5">
-                    {getDuration(logInvoice.automation_started_at, logInvoice.automation_finished_at) || 'In Progress...'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Started Time</p>
-                  <p className="text-xs text-slate-300 font-mono mt-1.5 flex items-center gap-1">
-                    <Calendar className="w-3.5 h-3.5 opacity-60" />
-                    {formatDate(logInvoice.automation_started_at)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Finished Time</p>
-                  <p className="text-xs text-slate-300 font-mono mt-1.5 flex items-center gap-1">
-                    <Calendar className="w-3.5 h-3.5 opacity-60" />
-                    {formatDate(logInvoice.automation_finished_at)}
-                  </p>
-                </div>
+
+                {/* Smaller Metadata Row */}
+                {(logInvoice.automation_started_at || logInvoice.automation_finished_at) && (
+                  <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-800/60 text-[10px] text-slate-400 font-mono">
+                    {logInvoice.automation_started_at && (
+                      <div>Started: {formatDate(logInvoice.automation_started_at)}</div>
+                    )}
+                    {logInvoice.automation_finished_at && (
+                      <div>Finished: {formatDate(logInvoice.automation_finished_at)}</div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Error message box if failed */}

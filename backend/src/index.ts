@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import routes from './routes';
+import { AIQueueWorker } from './automation/aiQueue';
 
 // Load environment variables
 dotenv.config();
@@ -52,4 +53,7 @@ app.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📁 Static uploads folder: ${uploadsDir}`);
   console.log(`===============================================`);
+
+  // Start background AI extraction queue worker
+  AIQueueWorker.getInstance().start();
 });
