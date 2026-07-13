@@ -20,7 +20,8 @@ import {
   CheckCircle,
   RefreshCw,
   Play,
-  Sparkles
+  Sparkles,
+  AlertTriangle
 } from 'lucide-react';
 import { Invoice } from './Dashboard';
 import { ToastType } from './Toast';
@@ -71,6 +72,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [retryingAI, setRetryingAI] = useState<boolean>(false);
+  const [verifyingIrd, setVerifyingIrd] = useState<boolean>(false);
   
   // Mobile responsiveness tab
   const [activeMobileTab, setActiveMobileTab] = useState<'document' | 'form'>('document');
@@ -88,6 +90,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
   const [isDirty, setIsDirty] = useState<boolean>(false);
 
   // Image Viewer Interactive State
+  const viewerRef = React.useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState<number>(1);
   const [position, setPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [rotation, setRotation] = useState<number>(0);
@@ -351,6 +354,56 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
     }
   };
 
+  // Verify with IRD
+  const handleVerifyWithIrd = async () => {
+    if (!invoice) return;
+    const pan = formData.supplier_pan;
+    const supplierName = formData.supplier_name;
+
+    if (!pan || !/^\d{9}$/.test(pan)) {
+      showToast('Invalid PAN. Must be a 9-digit number.', 'error');
+      return;
+    }
+
+    setVerifyingIrd(true);
+    try {
+      const res = await axios.post('/api/ird/verify-pan', {
+        invoiceId: invoice.id,
+        pan,
+        supplierName
+      });
+
+      const data = res.data;
+      if (data.error === 'PAN not found' || data.verified === false) {
+        showToast('PAN verification completed: PAN not found.', 'warning');
+      } else if (data.verified) {
+        if (data.match) {
+          showToast('PAN verification successful. Name matches!', 'success');
+        } else {
+          showToast('PAN verification completed. Name mismatch detected.', 'warning');
+        }
+      }
+
+      // Update local invoice state
+      setInvoice({
+        ...invoice,
+        supplier_pan: pan,
+        supplier_name: supplierName,
+        ird_verified: data.verified,
+        ird_name: data.irdName,
+        ird_status: data.status,
+        ird_name_match: data.match,
+        ird_verified_at: new Date().toISOString()
+      });
+    } catch (err: any) {
+      console.error('IRD Verification failed:', err);
+      const errMsg = err.response?.data?.error || 'Network error. IRD is unavailable.';
+      showToast(errMsg, 'error');
+    } finally {
+      setVerifyingIrd(false);
+    }
+  };
+
   // Save Draft (Updates database, stays on page)
   const handleSaveDraft = async () => {
     if (!invoice) return;
@@ -506,14 +559,25 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
     onBack();
   };
 
-  // Pointer Zoom and Pan Events
-  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const zoomFactor = 0.1;
-    let nextZoom = zoom + (e.deltaY < 0 ? zoomFactor : -zoomFactor);
-    nextZoom = Math.max(0.5, Math.min(5, nextZoom));
-    setZoom(nextZoom);
-  };
+  // Non-passive wheel event listener hook to prevent scroll propagation when zooming
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const zoomFactor = 0.1;
+      setZoom(z => {
+        let nextZoom = z + (e.deltaY < 0 ? zoomFactor : -zoomFactor);
+        return Math.max(0.5, Math.min(5, nextZoom));
+      });
+    };
+
+    viewer.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      viewer.removeEventListener('wheel', onWheel);
+    };
+  }, [loading, invoice, isFullscreen]);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return; // Left mouse button only
@@ -722,8 +786,8 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
             ) : (
               // Custom Interactive Image View Mode
               <div 
+                ref={viewerRef}
                 className="flex-1 w-full h-full overflow-hidden relative select-none flex items-center justify-center cursor-grab"
-                onWheel={handleWheel}
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
@@ -1119,7 +1183,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                         </span>
                       )}
                     </label>
-                    <div className="relative">
+                    <div className={field.key === 'supplier_pan' ? 'flex gap-3' : 'relative'}>
                       {isAmountField && (
                         <span className="absolute inset-y-0 left-0 pl-4.5 flex items-center text-slate-400 dark:text-slate-500 font-bold text-base pointer-events-none">Rs.</span>
                       )}
@@ -1149,7 +1213,89 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                         }`}
                         placeholder={field.placeholder}
                       />
+                      {field.key === 'supplier_pan' && (
+                        <button
+                          type="button"
+                          disabled={verifyingIrd || submitting || invoice.status === 'Completed' || invoice.status === 'Automation Running' || invoice.status === 'Pending AI Extraction' || invoice.status === 'AI Processing'}
+                          onClick={handleVerifyWithIrd}
+                          className="px-4.5 py-3 text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 rounded-xl border border-indigo-200/50 dark:border-indigo-800/30 focus:outline-none transition-all disabled:opacity-50 active:scale-98 flex items-center justify-center gap-2 flex-shrink-0 cursor-pointer shadow-sm"
+                        >
+                          {verifyingIrd ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <span>Loading...</span>
+                            </>
+                          ) : (
+                            <span>Verify with IRD</span>
+                          )}
+                        </button>
+                      )}
                     </div>
+                    {(() => {
+                      const isPanOrNameEdited = 
+                        invoice && (formData.supplier_pan !== invoice.supplier_pan ||
+                        formData.supplier_name !== invoice.supplier_name);
+                      const showIrdResult = field.key === 'supplier_pan' && invoice && !isPanOrNameEdited && invoice.ird_verified_at;
+                      
+                      if (!showIrdResult || !invoice) return null;
+                      
+                      return (
+                        <div className="mt-2.5 p-4 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/30 flex flex-col gap-3.5 transition-all animate-fadeIn">
+                          {invoice.ird_verified ? (
+                            invoice.ird_name_match ? (
+                              <div className="flex flex-col gap-2">
+                                <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-extrabold text-xs uppercase tracking-wider">
+                                  <CheckCircle className="w-3.5 h-3.5" />
+                                  <span>✓ Verified</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3 mt-1 text-xs">
+                                  <div>
+                                    <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide">IRD Name</div>
+                                    <div className="font-bold text-slate-700 dark:text-slate-300 mt-0.5">{invoice.ird_name}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide">Status</div>
+                                    <div className="font-bold text-slate-700 dark:text-slate-300 mt-0.5">{invoice.ird_status || 'Active'}</div>
+                                  </div>
+                                  <div className="col-span-2">
+                                    <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide">Name Match</div>
+                                    <div className="font-bold text-emerald-600 dark:text-emerald-400 mt-0.5 flex items-center gap-1">
+                                      ✓ Yes
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col gap-2">
+                                <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-extrabold text-xs uppercase tracking-wider">
+                                  <AlertTriangle className="w-3.5 h-3.5" />
+                                  <span>Name does not match</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3 mt-1 text-xs">
+                                  <div>
+                                    <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide">Invoice</div>
+                                    <div className="font-bold text-rose-600 dark:text-rose-400 mt-0.5">{formData.supplier_name}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide">IRD</div>
+                                    <div className="font-bold text-amber-600 dark:text-amber-400 mt-0.5">{invoice.ird_name}</div>
+                                  </div>
+                                  <div className="col-span-2 mt-1">
+                                    <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide">Status</div>
+                                    <div className="font-bold text-slate-700 dark:text-slate-300 mt-0.5">{invoice.ird_status || 'Active'}</div>
+                                  </div>
+                                </div>
+                              </div>
+                            )
+                          ) : (
+                            <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 font-extrabold text-xs uppercase tracking-wider">
+                              <AlertTriangle className="w-3.5 h-3.5" />
+                              <span>⚠ PAN not found</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                     {field.key === 'non_taxable_amount' && 
                       (!isNaN(Number(formData.taxable_amount)) && Number(formData.taxable_amount) > 0 || 
                        !isNaN(Number(formData.non_taxable_amount)) && Number(formData.non_taxable_amount) > 0) && (

@@ -41,6 +41,11 @@ export interface Invoice {
   automation_started_at?: string | null;
   automation_finished_at?: string | null;
   captured_at?: string | null;
+  ird_verified?: boolean | null;
+  ird_name?: string | null;
+  ird_status?: string | null;
+  ird_name_match?: boolean | null;
+  ird_verified_at?: string | null;
   created_at: string;
   updated_at: string;
 }

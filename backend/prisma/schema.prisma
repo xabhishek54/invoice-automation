@@ -22,6 +22,11 @@ model Invoice {
   automation_started_at DateTime?
   automation_finished_at DateTime?
   captured_at    DateTime?
+  ird_verified      Boolean?
+  ird_name          String?
+  ird_status        String?
+  ird_name_match    Boolean?
+  ird_verified_at   DateTime?
   created_at     DateTime @default(now())
   updated_at     DateTime @updatedAt
 }
