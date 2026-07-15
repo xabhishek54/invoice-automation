@@ -2,7 +2,7 @@
 
 A self-hosted AI-powered invoice processing platform for extracting, verifying, and automating invoice entry into ERP systems.
 
-> ⚠️ Built primarily using AI-assisted ("vibe coding") development. The focus of this project is rapid prototyping, workflow automation, and practical functionality.
+> ⚠️ Built primarily by vibe coding(AI Assisted). The focus of this project is rapid prototyping, workflow automation, and practical functionality.
 
 ## ✨ Features
 - 📤 **Batch invoice upload** with drag & drop support
